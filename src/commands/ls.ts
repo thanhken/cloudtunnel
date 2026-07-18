@@ -19,8 +19,8 @@ export function registerLs(program: Command): void {
         return;
       }
       printTable(
-        ["ID", "SUBDOMAIN", "TARGET", "STATE", "PID"],
-        rows.map((r) => [r.id, r.hostname, r.port, r.state, r.pid]),
+        ["#", "SUBDOMAIN", "TARGET", "STATE", "PID"],
+        rows.map((r) => [r.num, r.hostname, r.port, r.state, r.pid]),
       );
     });
 }

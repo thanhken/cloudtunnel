@@ -10,6 +10,7 @@ export interface RegistryEntry {
   subdomain: string;
   zone: string;
   zoneId: string;
+  index?: number; // small stable handle shown as `#` in `ls` (target by number)
   tunnelId?: string;
   dnsRecordId?: string;
   port: number;
@@ -75,11 +76,25 @@ export function upsertEntry(fqdn: string, patch: Partial<RegistryEntry> & Pick<R
     const prev = reg[fqdn];
     reg[fqdn] = {
       createdAt: prev?.createdAt ?? new Date().toISOString(),
+      index: prev?.index ?? nextIndex(reg),
       state: "provisioning",
       ...prev,
       ...patch,
     };
   });
+}
+
+/** Smallest positive integer not currently used as an entry index (reused when
+ * an entry is removed) — the friendly `#` handle shown in `ls`. */
+function nextIndex(reg: Registry): number {
+  const used = new Set(
+    Object.values(reg)
+      .map((e) => e.index)
+      .filter((n): n is number => typeof n === "number"),
+  );
+  let i = 1;
+  while (used.has(i)) i++;
+  return i;
 }
 
 /** Merge changed fields onto an existing entry under the lock (no stale

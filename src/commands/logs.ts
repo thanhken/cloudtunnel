@@ -45,7 +45,7 @@ function follow(file: string, fromPos: number): void {
 export function registerLogs(program: Command): void {
   program
     .command("logs")
-    .argument("<name>", "subdomain name or full hostname")
+    .argument("<target>", "subdomain name / hostname / id / #")
     .description("Show the connector log for a subdomain (use -f to follow)")
     .option("-f, --follow", "keep printing new log lines (like tail -f)")
     .option("-n, --lines <n>", "number of lines to show", "50")

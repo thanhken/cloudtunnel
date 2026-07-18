@@ -90,7 +90,6 @@ describe("createTunnelSubdomain", () => {
     expect(result).toMatchObject({
       tunnelId: "tunnel-123",
       token: "token-xyz",
-      adopted: false,
     });
     expect(result.host).toMatchObject({
       hostname: "app.example.com",

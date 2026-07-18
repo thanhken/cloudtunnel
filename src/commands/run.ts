@@ -7,16 +7,17 @@ import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf } from "../cloudflare/client.js";
 import { logDir } from "../config/paths.js";
 import { ensureCloudflared } from "../connector/binary.js";
-import { startConnector, stopConnector } from "../connector/process.js";
+import { startConnector } from "../connector/process.js";
 import { waitHealthy, type HealthResult } from "../connector/health.js";
-import { currentBootId, getEntry, patchEntry } from "../connector/registry.js";
+import { currentBootId, patchEntry } from "../connector/registry.js";
 import { createTunnelSubdomain } from "../core/orchestrator-create.js";
+import { removeTunnelSubdomain } from "../core/orchestrator-manage.js";
 import { getProfile } from "../core/profiles.js";
 
 /**
  * Run every service in a saved profile at once (e.g. `cloudtunnel run mb` →
- * backend + frontend live together). All connectors run in the foreground;
- * Ctrl-C stops them all (subdomains are kept).
+ * backend + frontend live together). Foreground: Ctrl-C releases them all.
+ * `--detach`: they keep running until `cloudtunnel down --all`.
  */
 interface RunOptions { force?: boolean; domain?: string; detach?: boolean }
 
@@ -42,7 +43,7 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
     const logFile = join(logDir, `${result.host.subdomain}.log`);
     const conn = startConnector({
       bin, token: result.token, detach: !!opts.detach, logFile,
-      onExit: opts.detach ? undefined : () => say.warn(`Connector for ${fqdn} exited — check \`cloudtunnel status ${result.host.subdomain}\`.`),
+      onExit: opts.detach ? undefined : () => say.warn(`Connector for ${fqdn} exited.`),
     });
     await patchEntry(fqdn, { pid: conn.pid, bootId: currentBootId(), logFile });
     started.push({ fqdn, subdomain: result.host.subdomain, tunnelId: result.tunnelId, target: `${svc.proto}://localhost:${svc.port}`, pid: conn.pid });
@@ -64,7 +65,7 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
 
   const lines = started.map((s, i) => `${formatRoute(s.fqdn, s.target)}${healths[i] === "healthy" ? "" : dim(`  (${healths[i]})`)}`);
   clack.note(lines.join("\n"), `profile "${name}" — ${live}/${started.length} live`);
-  say.dim("Ctrl-C stops all connectors (subdomains are kept).");
+  say.dim("Ctrl-C stops and releases all of them.");
 
   let tornDown = false;
   const teardownAll = async (code: number): Promise<void> => {
@@ -72,10 +73,13 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
     tornDown = true;
     try {
       for (const s of started) {
-        const entry = getEntry(s.fqdn);
-        if (entry) await stopConnector(entry);
+        try {
+          await removeTunnelSubdomain(cf, s.fqdn, { force: true, quiet: true });
+        } catch {
+          /* best-effort release */
+        }
       }
-      if (process.stdout.isTTY) clack.outro(`Stopped ${started.length} connector(s) · subdomains kept`);
+      if (process.stdout.isTTY) clack.outro(`Stopped · released ${started.length} subdomain(s)`);
     } catch (err) {
       reportError(err);
     } finally {

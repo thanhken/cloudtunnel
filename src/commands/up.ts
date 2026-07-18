@@ -5,14 +5,14 @@ import * as clack from "@clack/prompts";
 import { CliError, reportError } from "../ui/errors.js";
 import { dim, formatRoute, say, selectOne } from "../ui/output.js";
 import { ensureAuth } from "../config/ensure-auth.js";
-import { loadConfig, saveConfig } from "../config/store.js";
-import { resolveCf } from "../cloudflare/client.js";
+import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { listZones } from "../cloudflare/zones.js";
+import type { Credentials } from "../config/store.js";
 import { logDir } from "../config/paths.js";
 import { ensureCloudflared } from "../connector/binary.js";
-import { startConnector, stopConnector } from "../connector/process.js";
+import { startConnector } from "../connector/process.js";
 import { waitHealthy } from "../connector/health.js";
-import { currentBootId, getEntry, patchEntry } from "../connector/registry.js";
+import { currentBootId, patchEntry } from "../connector/registry.js";
 import { createTunnelSubdomain } from "../core/orchestrator-create.js";
 import { removeTunnelSubdomain } from "../core/orchestrator-manage.js";
 
@@ -23,7 +23,6 @@ interface UpOptions {
   zone?: string; // alias of --domain
   hostname?: string;
   detach?: boolean;
-  ephemeral?: boolean;
   proto: "http" | "https";
   force?: boolean;
 }
@@ -36,21 +35,32 @@ function parsePort(port: string): number {
   return n;
 }
 
-/** Resolve which domain (zone) to use: explicit `-d` → saved default → auto
- * (single zone) → interactive pick (multiple + TTY, remembered) → error (non-TTY). */
-export async function resolveDomain(token: string, explicit?: string, saved?: string): Promise<string> {
+/** Which domain to use: `-d` → the single zone → an interactive picker (TTY) →
+ * saved default (non-TTY) → error. `-d` is skipped when `--hostname` is given. */
+async function resolveDomain(cf: Cf, opts: UpOptions, creds: Credentials): Promise<string | undefined> {
+  if (opts.hostname) return undefined;
+  const explicit = opts.domain ?? opts.zone;
   if (explicit) return explicit;
-  if (saved) return saved;
-  const zones = await listZones(token);
+  const zones = await listZones(cf.token);
   if (zones.length === 0) throw new CliError("No domains found in this Cloudflare account.");
   if (zones.length === 1) return zones[0]!.name;
-  if (!process.stdin.isTTY) {
-    throw new CliError("Multiple domains in this account — pick one.", { hint: "pass -d <domain>, e.g. -d example.com" });
+  if (process.stdin.isTTY) return (await selectOne("Choose a domain", zones, (z) => z.name)).name;
+  if (creds.defaultZone) return creds.defaultZone;
+  throw new CliError("Multiple domains in this account — pick one.", { hint: "pass -d <domain>" });
+}
+
+/** The subdomain to use: `-s` → typed at the prompt → a friendly random name if
+ * left blank (or non-TTY). */
+async function resolveSubdomain(opts: UpOptions): Promise<string | undefined> {
+  const explicit = opts.subdomain ?? opts.name;
+  if (explicit || opts.hostname) return explicit;
+  if (!process.stdin.isTTY) return undefined; // random
+  const input = await clack.text({ message: "Subdomain", placeholder: "leave blank for a random name" });
+  if (clack.isCancel(input)) {
+    clack.cancel("Cancelled.");
+    process.exit(130);
   }
-  const chosen = await selectOne("Choose a domain", zones, (z) => z.name);
-  saveConfig({ ...loadConfig(), defaultZone: chosen.name });
-  say.dim(`Saved ${chosen.name} as your default domain (change it with \`cloudtunnel login --zone <domain>\`).`);
-  return chosen.name;
+  return (input as string).trim() || undefined; // blank → random
 }
 
 /** Print the last few lines of a connector logfile (shown when it crashes). */
@@ -67,12 +77,12 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   const port = parsePort(portArg);
   const creds = await ensureAuth();
   const cf = resolveCf();
-  const bin = await ensureCloudflared(); // before any CF create: unsupported platform fails clean
-
-  const subdomain = opts.subdomain ?? opts.name;
-  const domain = opts.hostname ? undefined : await resolveDomain(cf.token, opts.domain ?? opts.zone, creds.defaultZone);
+  const bin = await ensureCloudflared();
 
   if (process.stdout.isTTY) clack.intro("cloudtunnel");
+  const domain = await resolveDomain(cf, opts, creds);
+  const subdomain = await resolveSubdomain(opts);
+
   const spin = clack.spinner();
   let spinnerActive = true;
   const stopSpin = (msg: string) => {
@@ -105,6 +115,8 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
 
   spin.message("Connecting to the Cloudflare edge…");
   const controller = new AbortController();
+  // Foreground is up-while-running: any exit (Ctrl-C or a connector crash)
+  // releases the tunnel + DNS (2-state model).
   let tornDown = false;
   const teardown = async (exitCode: number): Promise<void> => {
     if (tornDown) return;
@@ -112,16 +124,10 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
     controller.abort();
     stopSpin("Stopping…");
     try {
-      const entry = getEntry(fqdn);
-      if (entry) await stopConnector(entry);
-      if (opts.ephemeral) {
-        await removeTunnelSubdomain(cf, fqdn, { force: true });
-        clack.outro(`Stopped · ${fqdn} deleted`);
-      } else {
-        clack.outro(`Stopped · ${fqdn} kept — re-attach: cloudtunnel ${port} -s ${result.host.subdomain}`);
-      }
+      await removeTunnelSubdomain(cf, fqdn, { force: true, quiet: true });
+      clack.outro(`Stopped · ${fqdn} released`);
     } catch (err) {
-      reportError(err); // never let teardown become an unhandled rejection
+      reportError(err);
     } finally {
       process.exit(exitCode);
     }
@@ -145,12 +151,11 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   const health = await waitHealthy(cf, result.tunnelId, { signal: controller.signal });
   if (health === "healthy") {
     stopSpin("Connected");
-    clack.note(`${formatRoute(fqdn, target)}\n${dim("Ctrl-C stops the connector — the subdomain is kept")}`, "Live");
+    clack.note(`${formatRoute(fqdn, target)}\n${dim("Ctrl-C stops and releases this subdomain")}`, "Live");
   } else if (health === "provisioning") {
     stopSpin("Provisioning");
     say.warn(`${fqdn} is not healthy yet — it should be live shortly.`);
   }
-  // health === "dead" → onExit already handled teardown.
 }
 
 export function registerUp(program: Command): void {
@@ -158,14 +163,13 @@ export function registerUp(program: Command): void {
     .command("up")
     .argument("<port>", "local port to expose (e.g. 3000)")
     .description("Expose a local port at an HTTPS subdomain (also: `cloudtunnel <port>`)")
-    .option("-s, --subdomain <name>", "subdomain label (default: a friendly random slug)")
-    .option("-d, --domain <domain>", "domain to create the subdomain under (default: your default; picks interactively if unset)")
+    .option("-s, --subdomain <name>", "subdomain label (prompted, or random if left blank)")
+    .option("-d, --domain <domain>", "domain to create the subdomain under (prompted from a list if unset)")
     .option("--name <name>", "alias of --subdomain")
     .option("--zone <domain>", "alias of --domain")
     .option("--hostname <fqdn>", "full hostname override (instead of --subdomain + --domain)")
     .option("--detach", "run the connector in the background")
-    .option("--ephemeral", "delete the tunnel + DNS on exit (default keeps them)")
-    .option("-f, --force", "take over a subdomain already occupied by another record")
+    .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("--proto <proto>", "local service protocol: http | https", "http")
     .action((port: string, opts: UpOptions) => runUp(port, opts));
 }

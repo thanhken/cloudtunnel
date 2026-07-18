@@ -25,10 +25,10 @@ cloudtunnel 3000      # → https://brave-otter-1a2b.example.com is live ✨
 ## ✨ Why cloudtunnel
 
 - 🔗 **Your domains, real subdomains** — routes through native Cloudflare Tunnel to `*.your-domain.com`, not a shared third-party host.
-- ⚡ **One command** — `cloudtunnel 3000` creates the tunnel, DNS, and connector, then prints a live HTTPS URL. Zero required flags.
+- ⚡ **One command** — `cloudtunnel 3000` creates the tunnel, DNS, and connector, then prints a live HTTPS URL. It even asks you which domain + subdomain to use.
+- 🧭 **Just two states** — `up` brings a subdomain online; `down` (or Ctrl-C) releases it (deletes the tunnel + DNS). Re-running `up` always starts clean — no leftovers, no conflicts.
 - 🗂️ **Profiles** — save a whole project's services and bring them all up with `cloudtunnel run mb`.
 - 🌙 **Background mode** — `--detach` keeps connectors running after you close the terminal.
-- 🎯 **Zero-downtime** — `update` hot-reloads the port with no restart.
 - 🔒 **Secure by default** — token passed via env (never argv), stored `0600`, destructive ops are ownership-gated and re-verified.
 
 ---
@@ -37,20 +37,25 @@ cloudtunnel 3000      # → https://brave-otter-1a2b.example.com is live ✨
 
 ```bash
 cloudtunnel login                 # authenticate once
-cloudtunnel 3000                  # random subdomain → live URL (Ctrl-C stops, URL kept)
-cloudtunnel 3000 -s api           # pick the subdomain: api.<your-domain>
-cloudtunnel 3000 -s api -d foo.io # pick subdomain + domain
+cloudtunnel 3000                  # asks for domain + subdomain, then goes live
+cloudtunnel 3000 -s api           # skip the prompts: api.<your-domain>
+cloudtunnel 3000 -s api -d foo.io # subdomain + domain
 cloudtunnel 3000 --detach         # run in the background
 ```
 
-A live tunnel looks like this:
+Run `cloudtunnel 3000` with no flags and it guides you:
 
 ```
+┌  cloudtunnel
+◇  Choose a domain
+│  ● example.com   ○ foo.io
+◇  Subdomain
+│  api            (leave blank for a random name)
 ◇  Connected
 │
 ◇  Live ─────────────────────────────────────────╮
 │  https://api.example.com  →  http://localhost:3000
-│  Ctrl-C stops the connector — the subdomain is kept
+│  Ctrl-C stops and releases this subdomain
 ╰─────────────────────────────────────────────────╯
 ```
 
@@ -60,30 +65,29 @@ A live tunnel looks like this:
 
 | Command | What it does |
 | --- | --- |
-| `cloudtunnel login` | Authenticate; auto-resolve account + default domain. `--status` to inspect. |
-| `cloudtunnel <port>` · `up` | Create + serve a subdomain. `-s/--subdomain`, `-d/--domain`, `--detach`, `--ephemeral`, `-f/--force`, `--proto`. |
-| `cloudtunnel ls` · `ps` | List subdomains — `ID · SUBDOMAIN · TARGET · STATE · PID`. `--all` scans the whole account. |
-| `cloudtunnel logs <id\|name>` | Show a connector's log. `-f` to follow, `-n` for line count. |
-| `cloudtunnel update <id\|name> --port <p>` | Repoint to a new port — **zero downtime** (hot-reload). |
-| `cloudtunnel rm <id\|name>` · `remove` · `delete` | Delete a subdomain (stops connector, removes tunnel + DNS). `--dry-run`, `-f/--force`. |
-| `cloudtunnel down [id\|name] [--all]` | Stop connector(s); keep the tunnel + DNS. |
-| `cloudtunnel status <id\|name>` | Tunnel health + connector state. |
-| `cloudtunnel gc [--yes]` | Prune crash orphans. |
+| `cloudtunnel login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
+| `cloudtunnel <port>` · `up` | Bring a subdomain online. `-s/--subdomain`, `-d/--domain`, `--detach`, `-f/--force`, `--proto`. |
+| `cloudtunnel ls` · `ps` | List subdomains — `# · SUBDOMAIN · TARGET · STATE · PID`. `--all` scans the whole account. |
+| `cloudtunnel down <target>` · `rm` · `stop` | Release a subdomain — stop connector + delete tunnel + DNS. `--all`, `--dry-run`, `-f`. |
+| `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
 | `cloudtunnel zones` | List the domains in your account. |
 | `cloudtunnel save <profile> <svc…>` | Save a group of services. `svc` = `name:port[:proto]`, or `--from-running`. |
 | `cloudtunnel run <profile> [--detach]` | Bring up every service in a profile at once. |
 | `cloudtunnel profiles [--rm <name>]` | List saved profiles (or delete one). |
 
-> Targets accept a **full hostname**, a **subdomain name**, or a **tunnel id prefix** (as shown in `ls`).
+> A **`<target>`** is a `#` number, a subdomain name, a full hostname, or a tunnel-id prefix — all shown in `ls`. `down` also accepts `rm` / `remove` / `delete` / `stop`.
 
 ```
 $ cloudtunnel ls
-┌──────────────┬─────────────────────┬────────────────────────┬─────────┬───────┐
-│ ID           │ SUBDOMAIN           │ TARGET                 │ STATE   │ PID   │
-├──────────────┼─────────────────────┼────────────────────────┼─────────┼───────┤
-│ 8f3a1c2b4d5e │ api.example.com     │ http://localhost:3000  │ running │ 48213 │
-│ 1a2b3c4d5e6f │ web.example.com     │ https://localhost:5173 │ stopped │ -     │
-└──────────────┴─────────────────────┴────────────────────────┴─────────┴───────┘
+┌───┬─────────────────────┬────────────────────────┬───────┬───────┐
+│ # │ SUBDOMAIN           │ TARGET                 │ STATE │ PID   │
+├───┼─────────────────────┼────────────────────────┼───────┼───────┤
+│ 1 │ api.example.com     │ http://localhost:3000  │ up    │ 48213 │
+│ 2 │ web.example.com     │ https://localhost:5173 │ down  │ -     │
+└───┴─────────────────────┴────────────────────────┴───────┴───────┘
+
+$ cloudtunnel down 1        # release by number
+$ cloudtunnel down --all    # release everything
 ```
 
 ---
@@ -96,16 +100,16 @@ Expose a whole project's services with one command:
 cloudtunnel save mb api:3000 web:5173:https   # define the group (or: save mb --from-running)
 cloudtunnel run mb --detach                    # backend + frontend live in the background
 cloudtunnel logs api -f                         # follow one service's log
-cloudtunnel down --all                          # stop them all
+cloudtunnel down --all                          # release them all
 ```
 
 ---
 
-## 🌙 Foreground vs background
+## 🧭 Two states: up & down
 
-By default `up` and `run` stay in the **foreground** — the connector lives as long as the terminal is open, and <kbd>Ctrl-C</kbd> stops it (the subdomain is kept; delete it with `rm`).
+There are only two states. **`up`** brings a subdomain online (creating the tunnel + DNS). **`down`** — or pressing <kbd>Ctrl-C</kbd> in a foreground `up` — **releases** it: it stops the connector and deletes the tunnel + DNS on Cloudflare. Running `up` again recreates it cleanly (any leftover tunnel record for that name is cleaned up first, so you never hit conflicts).
 
-Add **`--detach`** to run in the **background** — the CLI prints the URL(s) and exits, and the connector keeps running after you close the terminal. Stop them with `cloudtunnel down <id|name>` (or `--all`) and tail output with `cloudtunnel logs <id|name> -f`.
+Add **`--detach`** to keep a connector running in the **background** after the CLI exits (and after you close the terminal). Release it later with `cloudtunnel down <target>` (or `--all`) and tail its output with `cloudtunnel logs <target> -f`.
 
 ---
 
@@ -138,9 +142,10 @@ Provide it via (highest precedence first): `CLOUDFLARE_API_TOKEN` env → `cloud
 
 | Symptom | Cause & fix |
 | --- | --- |
-| **HTTP 1016** / subdomain won't load | The connector isn't running. Start it — `cloudtunnel <port> -s <name>` re-attaches — or check `cloudtunnel status <name>`. |
+| **HTTP 1016** / subdomain won't load | The connector isn't running (`STATE = down` in `ls`). Bring it back up: `cloudtunnel <port> -s <name>`. |
+| **`down` says "active connections"** | Handled automatically — cloudtunnel cleans up the connections and retries the delete. |
 | **"grey-clouded" error** | The zone couldn't proxy the record; cfargotunnel routing needs an orange-cloud (proxied) CNAME. |
-| **Multiple domains, no default** | Pass `-d <domain>`, or set one with `cloudtunnel login --zone <domain>`. |
+| **A DNS record already occupies the name** | Pick another `-s`/`-d`, or pass `-f/--force` to replace a non-tunnel record. |
 
 ---
 

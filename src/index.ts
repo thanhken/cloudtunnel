@@ -6,11 +6,7 @@ import { reportError } from "./ui/errors.js";
 import { registerLogin } from "./commands/login.js";
 import { registerUp } from "./commands/up.js";
 import { registerLs } from "./commands/ls.js";
-import { registerRm } from "./commands/rm.js";
-import { registerUpdate } from "./commands/update.js";
-import { registerStatus } from "./commands/status.js";
 import { registerDown } from "./commands/down.js";
-import { registerGc } from "./commands/gc.js";
 import { registerZones } from "./commands/zones.js";
 import { registerSave } from "./commands/save.js";
 import { registerRun } from "./commands/run.js";
@@ -21,8 +17,8 @@ const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
 
 const KNOWN_COMMANDS = new Set([
-  "login", "up", "ls", "ps", "rm", "remove", "delete", "update", "status",
-  "down", "gc", "zones", "save", "run", "profiles", "logs", "help",
+  "login", "up", "ls", "ps", "down", "rm", "remove", "delete", "stop",
+  "logs", "zones", "save", "run", "profiles", "help",
 ]);
 
 /**
@@ -60,8 +56,7 @@ function buildProgram(): Command {
   );
 
   for (const register of [
-    registerLogin, registerUp, registerLs, registerRm, registerUpdate,
-    registerStatus, registerDown, registerGc, registerZones,
+    registerLogin, registerUp, registerLs, registerDown, registerZones,
     registerSave, registerRun, registerProfiles, registerLogs,
   ]) {
     register(program);

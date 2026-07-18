@@ -1,5 +1,6 @@
 import { cfPaginate, cfRequest, type Cf } from "./client.js";
 import type { Connection, IngressRule, Tunnel } from "./types.js";
+import { CliError } from "../ui/errors.js";
 
 /** Tunnels created by cloudtunnel carry this name prefix (ownership marker). */
 export const MANAGED_TUNNEL_PREFIX = "ct-";
@@ -26,6 +27,27 @@ export async function getTunnel(cf: Cf, id: string): Promise<Tunnel> {
 
 export async function deleteTunnel(cf: Cf, id: string): Promise<void> {
   await cfRequest<unknown>(cf.token, "DELETE", `/accounts/${cf.accountId}/cfd_tunnel/${id}`);
+}
+
+/** Force-disconnect a tunnel's (possibly stale) connectors so it can be deleted. */
+export async function cleanupConnections(cf: Cf, id: string): Promise<void> {
+  await cfRequest<unknown>(cf.token, "DELETE", `/accounts/${cf.accountId}/cfd_tunnel/${id}/connections`);
+}
+
+/** Delete a tunnel; if Cloudflare refuses because it still has active
+ * connections (a connector died but the edge hasn't reaped it yet), clean the
+ * connections up and retry once. */
+export async function deleteTunnelWithConnections(cf: Cf, id: string): Promise<void> {
+  try {
+    await deleteTunnel(cf, id);
+  } catch (err) {
+    if (err instanceof CliError && /active connections/i.test(err.message)) {
+      await cleanupConnections(cf, id);
+      await deleteTunnel(cf, id);
+    } else {
+      throw err;
+    }
+  }
 }
 
 /** The connector token (encodes tunnelId + secret) passed to `cloudflared`. */
