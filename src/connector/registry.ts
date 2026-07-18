@@ -24,12 +24,16 @@ export interface RegistryEntry {
 
 type Registry = Record<string, RegistryEntry>;
 
-/** Stable per-boot id so a pid reused after a reboot is never mistaken for ours. */
+/** Stable per-boot id so a pid reused after a reboot is never mistaken for ours.
+ * On systems without the Linux boot_id file (e.g. macOS), fall back to the boot
+ * *time* bucketed to the minute — this is constant between invocations (unlike
+ * `os.uptime()`, which increases every second and would break connector tracking). */
 export function currentBootId(): string {
   try {
     return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
   } catch {
-    return `uptime-${Math.round(os.uptime())}-${os.hostname()}`;
+    const bootMinute = Math.floor((Date.now() - os.uptime() * 1000) / 60_000);
+    return `boot-${bootMinute}-${os.hostname()}`;
   }
 }
 
