@@ -164,7 +164,7 @@ export function registerUp(program: Command): void {
     .option("--zone <domain>", "alias of --domain")
     .option("--hostname <fqdn>", "full hostname override (instead of --subdomain + --domain)")
     .option("--detach", "run the connector in the background")
-    .option("--ephemeral", "delete the tunnel + DNS on exit (nport-style; default keeps them)")
+    .option("--ephemeral", "delete the tunnel + DNS on exit (default keeps them)")
     .option("-f, --force", "take over a subdomain already occupied by another record")
     .option("--proto <proto>", "local service protocol: http | https", "http")
     .action((port: string, opts: UpOptions) => runUp(port, opts));

@@ -1,7 +1,7 @@
 {
   "name": "@iamken/cloudtunnel",
-  "version": "0.1.0",
-  "description": "Manage Cloudflare Tunnels and subdomains account-wide from the CLI — nport-style instant share.",
+  "version": "0.1.1",
+  "description": "Manage Cloudflare Tunnels and subdomains account-wide from the CLI — instant HTTPS sharing on your own domains.",
   "type": "module",
   "bin": {
     "cloudtunnel": "dist/index.js",
@@ -27,7 +27,6 @@
     "cloudflared",
     "cli",
     "ngrok",
-    "nport",
     "subdomain"
   ],
   "license": "MIT",

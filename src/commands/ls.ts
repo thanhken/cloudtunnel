@@ -7,6 +7,7 @@ import { listAll } from "../core/orchestrator-manage.js";
 export function registerLs(program: Command): void {
   program
     .command("ls")
+    .alias("ps")
     .description("List tunnel subdomains (managed by default; --all scans the whole account)")
     .option("--all", "scan every zone in the account (slower; shows unmanaged tunnels too)")
     .action(async (opts: { all?: boolean }) => {
@@ -18,8 +19,8 @@ export function registerLs(program: Command): void {
         return;
       }
       printTable(
-        ["SUBDOMAIN", "ZONE", "TARGET", "STATE"],
-        rows.map((r) => [r.hostname, r.zone, r.port, r.state]),
+        ["ID", "SUBDOMAIN", "TARGET", "STATE", "PID"],
+        rows.map((r) => [r.id, r.hostname, r.port, r.state, r.pid]),
       );
     });
 }

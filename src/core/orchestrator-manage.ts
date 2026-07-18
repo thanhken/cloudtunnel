@@ -13,18 +13,23 @@ const tunnelIdFromCname = (content: string): string => content.replace(/\.cfargo
 const isNotFound = (err: unknown): boolean => err instanceof CliError && err.status === 404;
 const zoneFromFqdn = (fqdn: string): string => fqdn.slice(fqdn.indexOf(".") + 1);
 
-/** Resolve a `<name|fqdn>` target to its registry entry / fqdn. Refuses an
- * ambiguous bare name that matches multiple zones. */
+/** Resolve a target to its registry entry / fqdn. Accepts a full hostname, a
+ * subdomain name, or a tunnel-id prefix (as shown in `cloudtunnel ls`). Refuses
+ * an ambiguous match. */
 export function resolveTarget(target: string): { fqdn: string; entry?: RegistryEntry } {
   if (target.includes(".")) return { fqdn: target, entry: getEntry(target) };
-  const matches = listEntries().filter((e) => e.subdomain === target);
+  const entries = listEntries();
+  const byId = entries.filter((e) => e.tunnelId?.startsWith(target));
+  const matches = byId.length > 0 ? byId : entries.filter((e) => e.subdomain === target);
   if (matches.length > 1) {
-    throw new CliError(`"${target}" matches multiple zones.`, {
-      hint: `use the full hostname: ${matches.map((m) => `${m.subdomain}.${m.zone}`).join(", ")}`,
+    throw new CliError(`"${target}" matches multiple subdomains.`, {
+      hint: `use a full hostname or a longer id: ${matches.map((m) => `${m.subdomain}.${m.zone}`).join(", ")}`,
     });
   }
   const entry = matches[0];
-  if (!entry) throw new CliError(`No tracked subdomain named "${target}".`, { hint: "pass a full hostname" });
+  if (!entry) {
+    throw new CliError(`No tracked subdomain matching "${target}".`, { hint: "pass a hostname, name, or id (see `cloudtunnel ls`)" });
+  }
   return { fqdn: `${entry.subdomain}.${entry.zone}`, entry };
 }
 
@@ -91,18 +96,19 @@ export async function updateIngress(cf: Cf, target: string, port: number, proto?
   say.ok(`${fqdn} now points to ${nextProto}://localhost:${port} (no restart needed)`);
 }
 
-export interface LsRow { hostname: string; zone: string; port: string; state: string; managed: boolean }
+export interface LsRow { id: string; hostname: string; port: string; state: string; pid: string; managed: boolean }
 
-/** Reconcile + list tracked subdomains (with connector state). `all` also scans
- * every zone for cfargotunnel CNAMEs created outside cloudtunnel. */
+/** Reconcile + list tracked subdomains (id, target, state, connector pid). `all`
+ * also scans every zone for cfargotunnel CNAMEs created outside cloudtunnel. */
 export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsRow[]> {
   const entries = await reconcile();
   const tunnels = new Map((await listTunnels(cf)).map((t) => [t.id, t]));
   const rows: LsRow[] = entries.map((e) => ({
+    id: e.tunnelId ? e.tunnelId.slice(0, 12) : "-",
     hostname: `${e.subdomain}.${e.zone}`,
-    zone: e.zone,
     port: `${e.proto}://localhost:${e.port}`,
     state: e.tunnelId && !tunnels.has(e.tunnelId) ? "dangling" : e.state,
+    pid: e.state === "running" && e.pid ? String(e.pid) : "-",
     managed: true,
   }));
   if (opts.all) {
@@ -112,7 +118,7 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsR
     for (const zone of await listZones(cf.token)) {
       for (const rec of await listCargoCnames(cf.token, zone.id)) {
         if (!tracked.has(rec.name)) {
-          rows.push({ hostname: rec.name, zone: zone.name, port: "-", state: "unmanaged", managed: false });
+          rows.push({ id: tunnelIdFromCname(rec.content).slice(0, 12), hostname: rec.name, port: "-", state: "unmanaged", pid: "-", managed: false });
         }
       }
     }

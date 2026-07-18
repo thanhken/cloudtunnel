@@ -18,7 +18,7 @@ import { getProfile } from "../core/profiles.js";
  * backend + frontend live together). All connectors run in the foreground;
  * Ctrl-C stops them all (subdomains are kept).
  */
-interface RunOptions { force?: boolean; domain?: string }
+interface RunOptions { force?: boolean; domain?: string; detach?: boolean }
 
 async function runProfile(name: string, opts: RunOptions): Promise<void> {
   const creds = await ensureAuth();
@@ -30,7 +30,7 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
   const spin = clack.spinner();
   spin.start("Creating tunnels…");
 
-  const started: Array<{ fqdn: string; subdomain: string; tunnelId: string; target: string }> = [];
+  const started: Array<{ fqdn: string; subdomain: string; tunnelId: string; target: string; pid: number }> = [];
   for (const svc of profile.services) {
     spin.message(`Creating ${svc.name} (:${svc.port})…`);
     const result = await createTunnelSubdomain(cf, {
@@ -41,11 +41,20 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
     const fqdn = result.host.hostname;
     const logFile = join(logDir, `${result.host.subdomain}.log`);
     const conn = startConnector({
-      bin, token: result.token, detach: false, logFile,
-      onExit: () => say.warn(`Connector for ${fqdn} exited — check \`cloudtunnel status ${result.host.subdomain}\`.`),
+      bin, token: result.token, detach: !!opts.detach, logFile,
+      onExit: opts.detach ? undefined : () => say.warn(`Connector for ${fqdn} exited — check \`cloudtunnel status ${result.host.subdomain}\`.`),
     });
     await patchEntry(fqdn, { pid: conn.pid, bootId: currentBootId(), logFile });
-    started.push({ fqdn, subdomain: result.host.subdomain, tunnelId: result.tunnelId, target: `${svc.proto}://localhost:${svc.port}` });
+    started.push({ fqdn, subdomain: result.host.subdomain, tunnelId: result.tunnelId, target: `${svc.proto}://localhost:${svc.port}`, pid: conn.pid });
+  }
+
+  // Detached: print URLs + pids and exit; the connectors keep running.
+  if (opts.detach) {
+    spin.stop(`${started.length} service(s) started in the background`);
+    const lines = started.map((s) => `${formatRoute(s.fqdn, s.target)}  ${dim(`pid ${s.pid}`)}`);
+    clack.note(lines.join("\n"), `profile "${name}" — running in background`);
+    if (process.stdout.isTTY) clack.outro("Stop them with: cloudtunnel down --all");
+    return;
   }
 
   spin.message("Connecting to the Cloudflare edge…");
@@ -85,5 +94,6 @@ export function registerRun(program: Command): void {
     .description("Start every service in a saved profile at once")
     .option("-f, --force", "take over subdomains already occupied by another record")
     .option("-d, --domain <domain>", "override the profile's domain for this run")
+    .option("--detach", "run all connectors in the background (stop with `cloudtunnel down --all`)")
     .action((name: string, opts: RunOptions) => runProfile(name, opts));
 }

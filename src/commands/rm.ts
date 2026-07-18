@@ -8,7 +8,8 @@ interface RmOptions { force?: boolean; dryRun?: boolean; keepDns?: boolean }
 export function registerRm(program: Command): void {
   program
     .command("rm")
-    .argument("<target>", "subdomain name or full hostname to delete")
+    .aliases(["remove", "delete"])
+    .argument("<target>", "subdomain name, hostname, or id to delete")
     .description("Delete a tunnel subdomain (stops connector, removes tunnel + DNS)")
     .option("--force", "allow deleting a resource not created by cloudtunnel")
     .option("--dry-run", "show what would be deleted without deleting")

@@ -12,7 +12,7 @@ const NOUNS = [
 
 const pick = <T>(arr: T[]): T => arr[randomInt(arr.length)]!;
 
-/** A friendly random subdomain, e.g. `brave-otter-1a2b` (nport-style default). */
+/** A friendly random subdomain, e.g. `brave-otter-1a2b` (the default when unnamed). */
 export function randomSlug(): string {
   const suffix = randomInt(0x10000).toString(16).padStart(4, "0");
   return `${pick(ADJECTIVES)}-${pick(NOUNS)}-${suffix}`;

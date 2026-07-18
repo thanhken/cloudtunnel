@@ -15,13 +15,14 @@ import { registerZones } from "./commands/zones.js";
 import { registerSave } from "./commands/save.js";
 import { registerRun } from "./commands/run.js";
 import { registerProfiles } from "./commands/profiles.js";
+import { registerLogs } from "./commands/logs.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
 
 const KNOWN_COMMANDS = new Set([
-  "login", "up", "ls", "rm", "update", "status", "down", "gc", "zones",
-  "save", "run", "profiles", "help",
+  "login", "up", "ls", "ps", "rm", "remove", "delete", "update", "status",
+  "down", "gc", "zones", "save", "run", "profiles", "logs", "help",
 ]);
 
 /**
@@ -44,7 +45,7 @@ function buildProgram(): Command {
   const program = new Command();
   program
     .name("cloudtunnel")
-    .description("Manage Cloudflare Tunnels and subdomains account-wide, nport-style.")
+    .description("Manage Cloudflare Tunnels and subdomains account-wide, from your terminal.")
     .version(pkg.version, "-v, --version")
     .showHelpAfterError();
 
@@ -61,7 +62,7 @@ function buildProgram(): Command {
   for (const register of [
     registerLogin, registerUp, registerLs, registerRm, registerUpdate,
     registerStatus, registerDown, registerGc, registerZones,
-    registerSave, registerRun, registerProfiles,
+    registerSave, registerRun, registerProfiles, registerLogs,
   ]) {
     register(program);
   }

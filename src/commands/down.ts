@@ -20,7 +20,7 @@ async function stopEntry(entry: RegistryEntry): Promise<boolean> {
 export function registerDown(program: Command): void {
   program
     .command("down")
-    .argument("[name]", "subdomain to stop (omit with --all to stop everything)")
+    .argument("[name]", "subdomain name / hostname / id to stop (omit with --all)")
     .description("Stop a running connector, leaving the tunnel + DNS intact")
     .option("--all", "stop all running connectors")
     .action(async (name: string | undefined, opts: { all?: boolean }) => {
