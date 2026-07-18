@@ -50,5 +50,7 @@ export function resolveHostSpec(
     });
   }
   const subdomain = opts.name ?? randomSlug();
-  return { subdomain, zone, hostname: `${subdomain}.${zone}` };
+  // `@` means the root/apex domain (Cloudflare flattens the proxied CNAME).
+  const hostname = subdomain === "@" ? zone : `${subdomain}.${zone}`;
+  return { subdomain, zone, hostname };
 }

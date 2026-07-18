@@ -25,6 +25,7 @@ interface UpOptions {
   detach?: boolean;
   proto: "http" | "https";
   force?: boolean;
+  yes?: boolean;
 }
 
 function parsePort(port: string): number {
@@ -55,7 +56,7 @@ async function resolveSubdomain(opts: UpOptions): Promise<string | undefined> {
   const explicit = opts.subdomain ?? opts.name;
   if (explicit || opts.hostname) return explicit;
   if (!process.stdin.isTTY) return undefined; // random
-  const input = await clack.text({ message: "Subdomain", placeholder: "leave blank for a random name" });
+  const input = await clack.text({ message: "Subdomain", placeholder: "blank = random · @ = root domain" });
   if (clack.isCancel(input)) {
     clack.cancel("Cancelled.");
     process.exit(130);
@@ -83,6 +84,25 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   const domain = await resolveDomain(cf, opts, creds);
   const subdomain = await resolveSubdomain(opts);
 
+  // No spinner around create: it may prompt (domain/subdomain already handled,
+  // plus a "replace existing record?" confirm inside createTunnelSubdomain).
+  const result = await createTunnelSubdomain(cf, {
+    port, proto: opts.proto, name: subdomain, zone: domain,
+    hostname: opts.hostname, defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,
+  });
+  const fqdn = result.host.hostname;
+  const logLabel = result.host.subdomain === "@" ? "root" : result.host.subdomain;
+  const logFile = join(logDir, `${logLabel}.log`);
+  const target = `${opts.proto}://localhost:${port}`;
+
+  if (opts.detach) {
+    const started = startConnector({ bin, token: result.token, detach: true, logFile });
+    await patchEntry(fqdn, { pid: started.pid, bootId: currentBootId(), logFile });
+    clack.note(formatRoute(fqdn, target), `pid ${started.pid}`);
+    if (process.stdout.isTTY) clack.outro(`Stop it with: cloudtunnel down ${result.host.subdomain}`);
+    return;
+  }
+
   const spin = clack.spinner();
   let spinnerActive = true;
   const stopSpin = (msg: string) => {
@@ -91,29 +111,7 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
       spin.stop(msg);
     }
   };
-
-  spin.start("Creating tunnel…");
-  const result = await createTunnelSubdomain(cf, {
-    port, proto: opts.proto, name: subdomain, zone: domain,
-    hostname: opts.hostname, defaultZone: creds.defaultZone, force: opts.force,
-  }).catch((err: unknown) => {
-    stopSpin("Failed to create the tunnel");
-    throw err;
-  });
-  const fqdn = result.host.hostname;
-  const logFile = join(logDir, `${result.host.subdomain}.log`);
-  const target = `${opts.proto}://localhost:${port}`;
-
-  if (opts.detach) {
-    const started = startConnector({ bin, token: result.token, detach: true, logFile });
-    await patchEntry(fqdn, { pid: started.pid, bootId: currentBootId(), logFile });
-    stopSpin("Started in the background");
-    clack.note(formatRoute(fqdn, target), `pid ${started.pid}`);
-    if (process.stdout.isTTY) clack.outro(`Stop it with: cloudtunnel down ${result.host.subdomain}`);
-    return;
-  }
-
-  spin.message("Connecting to the Cloudflare edge…");
+  spin.start("Connecting to the Cloudflare edge…");
   const controller = new AbortController();
   // Foreground is up-while-running: any exit (Ctrl-C or a connector crash)
   // releases the tunnel + DNS (2-state model).
@@ -170,6 +168,7 @@ export function registerUp(program: Command): void {
     .option("--hostname <fqdn>", "full hostname override (instead of --subdomain + --domain)")
     .option("--detach", "run the connector in the background")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
+    .option("-y, --yes", "don't ask before replacing an existing record")
     .option("--proto <proto>", "local service protocol: http | https", "http")
     .action((port: string, opts: UpOptions) => runUp(port, opts));
 }

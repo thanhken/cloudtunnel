@@ -42,8 +42,11 @@ cloudtunnel login                 # authenticate once
 cloudtunnel 3000                  # asks for domain + subdomain, then goes live
 cloudtunnel 3000 -s api           # skip the prompts: api.<your-domain>
 cloudtunnel 3000 -s api -d foo.io # subdomain + domain
+cloudtunnel 3000 -s @             # the root domain itself (example.com)
 cloudtunnel 3000 --detach         # run in the background
 ```
+
+> Replacing an existing DNS record asks for confirmation first — pass `-y` to skip, or `-f` to also replace a non-tunnel record.
 
 Run `cloudtunnel 3000` with no flags and it guides you:
 

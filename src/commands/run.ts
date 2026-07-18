@@ -37,7 +37,7 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
     const result = await createTunnelSubdomain(cf, {
       port: svc.port, proto: svc.proto, name: svc.name,
       zone: svc.domain ?? opts.domain ?? profile.domain, defaultZone: creds.defaultZone,
-      force: opts.force,
+      force: opts.force, yes: true, // batch: never prompt per service
     });
     const fqdn = result.host.hostname;
     const logFile = join(logDir, `${result.host.subdomain}.log`);

@@ -1,10 +1,16 @@
 import pc from "picocolors";
 import Table from "cli-table3";
-import { cancel, intro, isCancel, note, outro, select, spinner } from "@clack/prompts";
+import { cancel, confirm as clackConfirm, intro, isCancel, note, outro, select, spinner } from "@clack/prompts";
 import { CliError } from "./errors.js";
 
 // Re-export the clack primitives used to build modern multi-step flows.
 export { intro, note, outro, spinner };
+
+/** Yes/no prompt (TTY). Cancel (Ctrl-C) counts as "no". */
+export async function confirm(message: string): Promise<boolean> {
+  const answer = await clackConfirm({ message });
+  return !isCancel(answer) && answer === true;
+}
 
 /** Redact a secret to `••••{last4}` so tokens never appear in output/logs. */
 export function redactToken(token: string): string {

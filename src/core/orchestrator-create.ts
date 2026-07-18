@@ -17,7 +17,7 @@ import { buildIngress } from "./ingress.js";
 import { resolveHostSpec, type HostSpec } from "./slug.js";
 import { currentBootId, patchEntry, removeEntry, upsertEntry } from "../connector/registry.js";
 import { CliError } from "../ui/errors.js";
-import { say } from "../ui/output.js";
+import { confirm, say } from "../ui/output.js";
 
 export interface CreateOptions {
   port: number;
@@ -27,6 +27,7 @@ export interface CreateOptions {
   hostname?: string;
   defaultZone?: string;
   force?: boolean;
+  yes?: boolean; // skip the "replace existing record?" confirmation
 }
 
 export interface CreateResult {
@@ -50,14 +51,20 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
 
   const existing = await findCname(cf.token, zone.id, host.hostname);
   if (existing) {
-    // A leftover tunnel record → clean it and recreate. A non-tunnel DNS record
-    // (A record, ordinary CNAME) → refuse unless --force, to avoid clobbering
-    // unrelated DNS the user owns.
+    // A leftover tunnel record → replaceable. A non-tunnel DNS record (A record,
+    // ordinary CNAME) → refuse unless --force, to avoid clobbering unrelated DNS.
     const isTunnelRecord = existing.content.endsWith(".cfargotunnel.com");
     if (!isTunnelRecord && !opts.force) {
       throw new CliError(`${host.hostname} is taken by a non-tunnel DNS record.`, {
         hint: "pick another --subdomain/--hostname, or pass -f/--force to replace it",
       });
+    }
+    // Confirm before replacing an existing record (interactive only; -f/-y skip).
+    if (!opts.force && !opts.yes && process.stdin.isTTY) {
+      const kind = isTunnelRecord ? "tunnel" : "DNS";
+      if (!(await confirm(`${host.hostname} already has a ${kind} record. Replace it?`))) {
+        throw new CliError("Cancelled.", { exitCode: 130 });
+      }
     }
     await releaseHostname(cf, zone.id, existing);
   }
@@ -72,7 +79,8 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
   let dnsRecordId: string | undefined;
   try {
     const suffix = randomInt(0x10000).toString(16).padStart(4, "0");
-    const tunnel = await createTunnel(cf, `${MANAGED_TUNNEL_PREFIX}${host.subdomain}-${suffix}`);
+    const label = host.subdomain === "@" ? "root" : host.subdomain;
+    const tunnel = await createTunnel(cf, `${MANAGED_TUNNEL_PREFIX}${label}-${suffix}`);
     tunnelId = tunnel.id;
     const token = await getTunnelToken(cf, tunnelId);
     await putIngress(cf, tunnelId, buildIngress({ hostname: host.hostname, port: opts.port, proto: opts.proto }));
