@@ -20,6 +20,8 @@ cloudtunnel login     # once — paste a Cloudflare token; account + domain auto
 cloudtunnel 3000      # → https://brave-otter-1a2b.example.com is live ✨
 ```
 
+> 💨 Prefer less typing? **`ctun`** is a built-in short alias — `ctun 3000`, `ctun ls`, `ctun down 1`.
+
 ---
 
 ## ✨ Why cloudtunnel
