@@ -12,13 +12,14 @@ import { registerSave } from "./commands/save.js";
 import { registerRun } from "./commands/run.js";
 import { registerProfiles } from "./commands/profiles.js";
 import { registerLogs } from "./commands/logs.js";
+import { registerService } from "./commands/service.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
 
 const KNOWN_COMMANDS = new Set([
   "login", "up", "ls", "ps", "down", "rm", "remove", "delete", "stop",
-  "logs", "zones", "save", "run", "profiles", "help",
+  "logs", "zones", "save", "run", "profiles", "service", "help",
 ]);
 
 /**
@@ -57,7 +58,7 @@ function buildProgram(): Command {
 
   for (const register of [
     registerLogin, registerUp, registerLs, registerDown, registerZones,
-    registerSave, registerRun, registerProfiles, registerLogs,
+    registerSave, registerRun, registerProfiles, registerService, registerLogs,
   ]) {
     register(program);
   }

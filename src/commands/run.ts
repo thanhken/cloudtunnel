@@ -12,20 +12,22 @@ import { waitHealthy, type HealthResult } from "../connector/health.js";
 import { currentBootId, patchEntry } from "../connector/registry.js";
 import { createTunnelSubdomain } from "../core/orchestrator-create.js";
 import { removeTunnelSubdomain } from "../core/orchestrator-manage.js";
-import { getProfile } from "../core/profiles.js";
+import { getProfile, parseTransportProtocol } from "../core/profiles.js";
 
 /**
  * Run every service in a saved profile at once (e.g. `cloudtunnel run mb` →
  * backend + frontend live together). Foreground: Ctrl-C releases them all.
  * `--detach`: they keep running until `cloudtunnel down --all`.
  */
-interface RunOptions { force?: boolean; domain?: string; detach?: boolean }
+interface RunOptions { force?: boolean; domain?: string; detach?: boolean; protocol?: string }
 
 async function runProfile(name: string, opts: RunOptions): Promise<void> {
   const creds = await ensureAuth();
   const cf = resolveCf();
   const bin = await ensureCloudflared();
   const profile = getProfile(name);
+  // Per-run override wins over the profile's saved transport.
+  const protocol = opts.protocol ? parseTransportProtocol(opts.protocol) : profile.protocol;
 
   if (process.stdout.isTTY) clack.intro(`cloudtunnel · profile "${name}"`);
   const spin = clack.spinner();
@@ -42,7 +44,7 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
     const fqdn = result.host.hostname;
     const logFile = join(logDir, `${result.host.subdomain}.log`);
     const conn = startConnector({
-      bin, token: result.token, detach: !!opts.detach, logFile,
+      bin, token: result.token, detach: !!opts.detach, logFile, protocol,
       onExit: opts.detach ? undefined : () => say.warn(`Connector for ${fqdn} exited.`),
     });
     await patchEntry(fqdn, { pid: conn.pid, bootId: currentBootId(), logFile });
@@ -99,5 +101,6 @@ export function registerRun(program: Command): void {
     .option("-f, --force", "take over subdomains already occupied by another record")
     .option("-d, --domain <domain>", "override the profile's domain for this run")
     .option("--detach", "run all connectors in the background (stop with `cloudtunnel down --all`)")
+    .option("--protocol <proto>", "edge transport: auto | http2 | quic (overrides the profile's saved protocol)")
     .action((name: string, opts: RunOptions) => runProfile(name, opts));
 }

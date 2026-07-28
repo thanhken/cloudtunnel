@@ -71,14 +71,15 @@ Run `cloudtunnel 3000` with no flags and it guides you:
 | Command | What it does |
 | --- | --- |
 | `cloudtunnel login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
-| `cloudtunnel <port>` · `up` | Bring a subdomain online. `-s/--subdomain`, `-d/--domain`, `--detach`, `-f/--force`, `--proto`. |
+| `cloudtunnel <port>` · `up` | Bring a subdomain online. `-s/--subdomain`, `-d/--domain`, `--detach`, `-f/--force`, `--proto`, `--protocol`. |
 | `cloudtunnel ls` · `ps` | List subdomains — `# · SUBDOMAIN · TARGET · STATE · PID`. `--all` scans the whole account. |
 | `cloudtunnel down <target>` · `rm` · `stop` | Release a subdomain — stop connector + delete tunnel + DNS. `--all`, `--dry-run`, `-f`. |
 | `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
 | `cloudtunnel zones` | List the domains in your account. |
-| `cloudtunnel save <profile> <svc…>` | Save a group of services. `svc` = `name:port[:proto]`, or `--from-running`. |
-| `cloudtunnel run <profile> [--detach]` | Bring up every service in a profile at once. |
-| `cloudtunnel profiles [--rm <name>]` | List saved profiles (or delete one). |
+| `cloudtunnel save <profile> <svc…>` | Save a group of services. `svc` = `name:port[:proto]`, `-d/--domain`, `--protocol`, or `--from-running`. |
+| `cloudtunnel run <profile> [--detach]` | Bring up every service in a profile at once. `--protocol` overrides the saved transport. |
+| `cloudtunnel profiles [--rm <name>]` | List saved profiles — `PROFILE · SERVICES · DOMAIN · PROTOCOL · SERVICE`. |
+| `cloudtunnel service enable\|disable\|status <profile>` | Register a profile as a systemd boot service (Linux, needs sudo). |
 
 > A **`<target>`** is a `#` number, a subdomain name, a full hostname, or a tunnel-id prefix — all shown in `ls`. `down` also accepts `rm` / `remove` / `delete` / `stop`.
 
@@ -107,6 +108,37 @@ cloudtunnel run mb --detach                    # backend + frontend live in the 
 cloudtunnel logs api -f                         # follow one service's log
 cloudtunnel down --all                          # release them all
 ```
+
+---
+
+## 🚄 Edge transport (`--protocol`)
+
+cloudflared connects to Cloudflare over **QUIC** (UDP) by default — fastest, but
+some networks drop idle UDP sessions, which surfaces as intermittent **530/502**
+errors. Force **`http2`** (TCP) there:
+
+```bash
+cloudtunnel up 8080 --protocol http2
+cloudtunnel save mb api:3000 web:5173 --protocol http2   # persist per profile
+cloudtunnel run mb --protocol http2                       # or override per run
+```
+
+Values: `auto` (default) · `http2` · `quic`.
+
+---
+
+## 🔁 Run on boot (systemd service)
+
+Register a profile as a **system service** so it comes up automatically after a
+reboot (Linux + systemd; installs to `/etc/systemd/system`, so it needs sudo):
+
+```bash
+cloudtunnel service enable mb --protocol http2   # install + enable + start now
+cloudtunnel service status mb                     # active | enabled | disabled | none
+cloudtunnel service disable mb                     # stop + disable + remove
+```
+
+The `SERVICE` column in `cloudtunnel profiles` shows each profile's current state.
 
 ---
 

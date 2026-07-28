@@ -2,9 +2,9 @@ import type { Command } from "commander";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { listEntries } from "../connector/registry.js";
-import { parseServiceSpec, saveProfile, type ProfileService } from "../core/profiles.js";
+import { parseServiceSpec, parseTransportProtocol, saveProfile, type ProfileService } from "../core/profiles.js";
 
-interface SaveOptions { fromRunning?: boolean; domain?: string }
+interface SaveOptions { fromRunning?: boolean; domain?: string; protocol?: string }
 
 export function registerSave(program: Command): void {
   program
@@ -14,6 +14,7 @@ export function registerSave(program: Command): void {
     .description("Save a group of services as a profile you can `run` together")
     .option("--from-running", "snapshot the currently tracked tunnels instead of listing services")
     .option("-d, --domain <domain>", "default domain for this profile")
+    .option("--protocol <proto>", "edge transport for this profile: auto | http2 | quic")
     .action((profile: string, specs: string[], opts: SaveOptions) => {
       let services: ProfileService[];
       if (opts.fromRunning) {
@@ -28,7 +29,8 @@ export function registerSave(program: Command): void {
         }
         services = specs.map(parseServiceSpec);
       }
-      saveProfile(profile, { services, domain: opts.domain });
+      const protocol = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
+      saveProfile(profile, { services, domain: opts.domain, protocol });
       say.ok(`Saved profile "${profile}" (${services.length} service${services.length === 1 ? "" : "s"}). Run it: cloudtunnel run ${profile}`);
     });
 }

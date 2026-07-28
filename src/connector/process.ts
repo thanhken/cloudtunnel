@@ -8,6 +8,9 @@ export interface StartOptions {
   token: string;
   detach: boolean;
   logFile: string;
+  /** cloudflared edge transport (quic | http2 | auto). Omitted ⇒ cloudflared's
+   * default. Force `http2` on UDP-hostile networks that drop idle QUIC. */
+  protocol?: string;
   /** Foreground only: fired when the connector exits for ANY reason (crash,
    * bad token, or a signal) so the caller can tear down / report. */
   onExit?: (code: number | null) => void;
@@ -28,6 +31,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export function startConnector(opts: StartOptions): StartedConnector {
   const args = ["tunnel", "run"];
+  // Edge transport: pass as an explicit flag so it also lands in the connector
+  // cmdline (visible/reproducible), not only via env.
+  if (opts.protocol) args.push("--protocol", opts.protocol);
   const env = { ...process.env, TUNNEL_TOKEN: opts.token };
   const fd = openSync(opts.logFile, "a", 0o600);
   const child = spawn(opts.bin, args, { env, detached: opts.detach, stdio: ["ignore", fd, fd] });

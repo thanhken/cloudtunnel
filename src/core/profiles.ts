@@ -2,6 +2,19 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { ensureDirs, profilesFile } from "../config/paths.js";
 import { CliError } from "../ui/errors.js";
 
+/**
+ * cloudflared edge transport (NOT the local service scheme in ProfileService.proto).
+ * `quic` is UDP-based and fastest, but UDP-hostile networks drop idle QUIC sessions
+ * (→ Cloudflare 530/502); `http2` runs over TCP and stays stable there. `auto` lets
+ * cloudflared choose (defaults to quic when the network probe passes).
+ */
+export type TransportProtocol = "auto" | "http2" | "quic";
+
+export function parseTransportProtocol(value: string): TransportProtocol {
+  if (value === "auto" || value === "http2" || value === "quic") return value;
+  throw new CliError(`Invalid protocol "${value}".`, { hint: "use auto, http2, or quic" });
+}
+
 /** One service in a profile — e.g. `{ name: "api", port: 3000 }`. */
 export interface ProfileService {
   name: string;
@@ -13,6 +26,7 @@ export interface ProfileService {
 export interface Profile {
   services: ProfileService[];
   domain?: string; // default domain for the whole profile
+  protocol?: TransportProtocol; // edge transport for every service in this profile
 }
 
 type Profiles = Record<string, Profile>;

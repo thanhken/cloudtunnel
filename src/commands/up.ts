@@ -15,6 +15,7 @@ import { waitHealthy } from "../connector/health.js";
 import { currentBootId, patchEntry } from "../connector/registry.js";
 import { createTunnelSubdomain } from "../core/orchestrator-create.js";
 import { removeTunnelSubdomain } from "../core/orchestrator-manage.js";
+import { parseTransportProtocol } from "../core/profiles.js";
 
 interface UpOptions {
   subdomain?: string;
@@ -24,6 +25,7 @@ interface UpOptions {
   hostname?: string;
   detach?: boolean;
   proto: "http" | "https";
+  protocol?: string; // edge transport: auto | http2 | quic
   force?: boolean;
   yes?: boolean;
 }
@@ -76,6 +78,7 @@ function showLogTail(logFile: string): void {
 
 async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   const port = parsePort(portArg);
+  const protocol = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
   const creds = await ensureAuth();
   const cf = resolveCf();
   const bin = await ensureCloudflared();
@@ -96,7 +99,7 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   const target = `${opts.proto}://localhost:${port}`;
 
   if (opts.detach) {
-    const started = startConnector({ bin, token: result.token, detach: true, logFile });
+    const started = startConnector({ bin, token: result.token, detach: true, logFile, protocol });
     await patchEntry(fqdn, { pid: started.pid, bootId: currentBootId(), logFile });
     clack.note(formatRoute(fqdn, target), `pid ${started.pid}`);
     if (process.stdout.isTTY) clack.outro(`Stop it with: cloudtunnel down ${result.host.subdomain}`);
@@ -132,7 +135,7 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   };
 
   const started = startConnector({
-    bin, token: result.token, detach: false, logFile,
+    bin, token: result.token, detach: false, logFile, protocol,
     onExit: (code) => {
       if (!tornDown) {
         stopSpin("cloudflared exited");
@@ -170,5 +173,6 @@ export function registerUp(program: Command): void {
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't ask before replacing an existing record")
     .option("--proto <proto>", "local service protocol: http | https", "http")
+    .option("--protocol <proto>", "cloudflared edge transport: auto | http2 | quic (http2 for UDP-hostile networks)")
     .action((port: string, opts: UpOptions) => runUp(port, opts));
 }

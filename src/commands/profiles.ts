@@ -1,6 +1,12 @@
 import type { Command } from "commander";
-import { printTable, say } from "../ui/output.js";
+import { dim, printTable, say } from "../ui/output.js";
 import { listProfiles, removeProfile } from "../core/profiles.js";
+import { serviceState, type ServiceState } from "../core/systemd.js";
+
+/** Render the boot-service state for the SERVICE column ("–" when not registered). */
+function formatService(state: ServiceState): string {
+  return state === "none" ? dim("–") : state;
+}
 
 export function registerProfiles(program: Command): void {
   program
@@ -19,11 +25,13 @@ export function registerProfiles(program: Command): void {
         return;
       }
       printTable(
-        ["PROFILE", "SERVICES", "DOMAIN"],
+        ["PROFILE", "SERVICES", "DOMAIN", "PROTOCOL", "SERVICE"],
         profiles.map(({ name, profile }) => [
           name,
           profile.services.map((s) => `${s.name}:${s.port}`).join(", "),
           profile.domain ?? "(default)",
+          profile.protocol ?? "auto",
+          formatService(serviceState(name)),
         ]),
       );
     });
