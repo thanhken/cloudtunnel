@@ -1,6 +1,6 @@
 {
   "name": "@iamken/cloudtunnel",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Manage Cloudflare Tunnels and subdomains account-wide from the CLI — instant HTTPS sharing on your own domains.",
   "type": "module",
   "bin": {
