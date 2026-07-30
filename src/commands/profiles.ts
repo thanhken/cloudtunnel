@@ -28,7 +28,7 @@ export function registerProfiles(program: Command): void {
         ["PROFILE", "SERVICES", "DOMAIN", "PROTOCOL", "SERVICE"],
         profiles.map(({ name, profile }) => [
           name,
-          profile.services.map((s) => `${s.name}:${s.port}`).join(", "),
+          profile.services.map((s) => `${s.name}:${s.port}${s.host ? `@${s.host}` : ""}`).join(", "),
           profile.domain ?? "(default)",
           profile.protocol ?? "auto",
           formatService(serviceState(name)),

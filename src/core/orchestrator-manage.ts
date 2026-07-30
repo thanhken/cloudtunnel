@@ -7,6 +7,7 @@ import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
 import { stopConnector } from "../connector/process.js";
+import { serviceUrl } from "./ingress.js";
 
 const tunnelIdFromCname = (content: string): string => content.replace(/\.cfargotunnel\.com\.?$/, "");
 const isNotFound = (err: unknown): boolean => err instanceof CliError && err.status === 404;
@@ -101,7 +102,7 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsR
     return {
       num: e.index ? String(e.index) : "-",
       hostname: `${e.subdomain}.${e.zone}`,
-      port: `${e.proto}://localhost:${e.port}`,
+      port: serviceUrl(e.proto, e.host ?? "localhost", e.port),
       state: !gone && e.state === "running" ? "up" : "down",
       pid: e.state === "running" && e.pid ? String(e.pid) : "-",
       managed: true,

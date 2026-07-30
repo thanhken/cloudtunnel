@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { ensureDirs, profilesFile } from "../config/paths.js";
 import { CliError } from "../ui/errors.js";
+import { validateHost } from "./ingress.js";
 
 /**
  * cloudflared edge transport (NOT the local service scheme in ProfileService.proto).
@@ -21,6 +22,7 @@ export interface ProfileService {
   port: number;
   proto: "http" | "https";
   domain?: string; // overrides the profile/default domain
+  host?: string; // forward target host (absent = localhost)
 }
 
 export interface Profile {
@@ -70,10 +72,13 @@ export function removeProfile(name: string): void {
 }
 
 /**
- * Parse a `name:port[:proto]` service spec, e.g. `api:3000` or `web:5173:https`.
+ * Parse a `name:port[:proto][@host]` service spec, e.g. `api:3000`,
+ * `web:5173:https`, or `api:3000@192.168.1.5` (forward to another host/IP).
  */
 export function parseServiceSpec(spec: string): ProfileService {
-  const [name, portStr, proto] = spec.split(":");
+  const at = spec.indexOf("@");
+  const host = at >= 0 ? validateHost(spec.slice(at + 1)) : undefined;
+  const [name, portStr, proto] = (at >= 0 ? spec.slice(0, at) : spec).split(":");
   const port = Number(portStr);
   if (!name || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new CliError(`Invalid service "${spec}".`, { hint: "use name:port, e.g. api:3000 or web:5173:https" });
@@ -81,5 +86,5 @@ export function parseServiceSpec(spec: string): ProfileService {
   if (proto && proto !== "http" && proto !== "https") {
     throw new CliError(`Invalid protocol "${proto}" in "${spec}".`, { hint: "proto must be http or https" });
   }
-  return { name, port, proto: (proto as "http" | "https") ?? "http" };
+  return { name, port, proto: (proto as "http" | "https") ?? "http", ...(host ? { host } : {}) };
 }

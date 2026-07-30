@@ -16,6 +16,7 @@ import { currentBootId, patchEntry } from "../connector/registry.js";
 import { createTunnelSubdomain } from "../core/orchestrator-create.js";
 import { removeTunnelSubdomain } from "../core/orchestrator-manage.js";
 import { parseTransportProtocol } from "../core/profiles.js";
+import { validateHost, serviceUrl } from "../core/ingress.js";
 
 interface UpOptions {
   subdomain?: string;
@@ -23,6 +24,7 @@ interface UpOptions {
   name?: string; // alias of --subdomain
   zone?: string; // alias of --domain
   hostname?: string;
+  source?: string; // forward target host/IP (default localhost)
   detach?: boolean;
   proto: "http" | "https";
   protocol?: string; // edge transport: auto | http2 | quic
@@ -79,6 +81,7 @@ function showLogTail(logFile: string): void {
 async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   const port = parsePort(portArg);
   const protocol = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
+  const host = opts.source ? validateHost(opts.source) : undefined;
   const creds = await ensureAuth();
   const cf = resolveCf();
   const bin = await ensureCloudflared();
@@ -91,12 +94,12 @@ async function runUp(portArg: string, opts: UpOptions): Promise<void> {
   // plus a "replace existing record?" confirm inside createTunnelSubdomain).
   const result = await createTunnelSubdomain(cf, {
     port, proto: opts.proto, name: subdomain, zone: domain,
-    hostname: opts.hostname, defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,
+    hostname: opts.hostname, host, defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,
   });
   const fqdn = result.host.hostname;
   const logLabel = result.host.subdomain === "@" ? "root" : result.host.subdomain;
   const logFile = join(logDir, `${logLabel}.log`);
-  const target = `${opts.proto}://localhost:${port}`;
+  const target = serviceUrl(opts.proto, host ?? "localhost", port);
 
   if (opts.detach) {
     const started = startConnector({ bin, token: result.token, detach: true, logFile, protocol });
@@ -169,6 +172,7 @@ export function registerUp(program: Command): void {
     .option("--name <name>", "alias of --subdomain")
     .option("--zone <domain>", "alias of --domain")
     .option("--hostname <fqdn>", "full hostname override (instead of --subdomain + --domain)")
+    .option("--source <host>", "forward to this host/IP instead of localhost (e.g. a LAN device or ::1)")
     .option("--detach", "run the connector in the background")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't ask before replacing an existing record")

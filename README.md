@@ -43,6 +43,7 @@ cloudtunnel 3000                  # asks for domain + subdomain, then goes live
 cloudtunnel 3000 -s api           # skip the prompts: api.<your-domain>
 cloudtunnel 3000 -s api -d foo.io # subdomain + domain
 cloudtunnel 3000 -s @             # the root domain itself (example.com)
+cloudtunnel 3000 --source 192.168.1.5 # forward to another host/IP (IPv4/IPv6), not localhost
 cloudtunnel 3000 --detach         # run in the background
 ```
 
@@ -71,12 +72,12 @@ Run `cloudtunnel 3000` with no flags and it guides you:
 | Command | What it does |
 | --- | --- |
 | `cloudtunnel login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
-| `cloudtunnel <port>` · `up` | Bring a subdomain online. `-s/--subdomain`, `-d/--domain`, `--detach`, `-f/--force`, `--proto`, `--protocol`. |
+| `cloudtunnel <port>` · `up` | Bring a subdomain online. `-s/--subdomain`, `-d/--domain`, `--source`, `--detach`, `-f/--force`, `--proto`, `--protocol`. |
 | `cloudtunnel ls` · `ps` | List subdomains — `# · SUBDOMAIN · TARGET · STATE · PID`. `--all` scans the whole account. |
 | `cloudtunnel down <target>` · `rm` · `stop` | Release a subdomain — stop connector + delete tunnel + DNS. `--all`, `--dry-run`, `-f`. |
 | `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
 | `cloudtunnel zones` | List the domains in your account. |
-| `cloudtunnel save <profile> <svc…>` | Save a group of services. `svc` = `name:port[:proto]`, `-d/--domain`, `--protocol`, or `--from-running`. |
+| `cloudtunnel save <profile> <svc…>` | Save a group of services. `svc` = `name:port[:proto][@host]`, `-d/--domain`, `--protocol`, or `--from-running`. |
 | `cloudtunnel run <profile> [--detach]` | Bring up every service in a profile at once. `--protocol` overrides the saved transport. |
 | `cloudtunnel profiles [--rm <name>]` | List saved profiles — `PROFILE · SERVICES · DOMAIN · PROTOCOL · SERVICE`. |
 | `cloudtunnel service enable\|disable\|status <profile>` | Register a profile as a systemd boot service (Linux, needs sudo). |
@@ -104,6 +105,7 @@ Expose a whole project's services with one command:
 
 ```bash
 cloudtunnel save mb api:3000 web:5173:https   # define the group (or: save mb --from-running)
+cloudtunnel save mb api:3000@192.168.1.5      # forward a service to another host/IP
 cloudtunnel run mb --detach                    # backend + frontend live in the background
 cloudtunnel logs api -f                         # follow one service's log
 cloudtunnel down --all                          # release them all

@@ -25,6 +25,7 @@ export interface CreateOptions {
   name?: string;
   zone?: string;
   hostname?: string;
+  host?: string; // forward target host (absent = localhost)
   defaultZone?: string;
   force?: boolean;
   yes?: boolean; // skip the "replace existing record?" confirmation
@@ -72,7 +73,7 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
   // Track provisioning BEFORE creating anything irreversible.
   await upsertEntry(host.hostname, {
     subdomain: host.subdomain, zone: host.zone, zoneId: zone.id,
-    port: opts.port, proto: opts.proto, state: "provisioning",
+    port: opts.port, proto: opts.proto, host: opts.host, state: "provisioning",
   });
 
   let tunnelId: string | undefined;
@@ -83,7 +84,7 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
     const tunnel = await createTunnel(cf, `${MANAGED_TUNNEL_PREFIX}${label}-${suffix}`);
     tunnelId = tunnel.id;
     const token = await getTunnelToken(cf, tunnelId);
-    await putIngress(cf, tunnelId, buildIngress({ hostname: host.hostname, port: opts.port, proto: opts.proto }));
+    await putIngress(cf, tunnelId, buildIngress({ hostname: host.hostname, port: opts.port, proto: opts.proto, host: opts.host }));
     const record = await createCname(cf.token, zone.id, host.hostname, tunnelId);
     dnsRecordId = record.id;
     await recordRunning(host, zone.id, tunnelId, dnsRecordId, opts);
@@ -99,7 +100,7 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
 async function recordRunning(host: HostSpec, zoneId: string, tunnelId: string, dnsRecordId: string, opts: CreateOptions): Promise<void> {
   await upsertEntry(host.hostname, {
     subdomain: host.subdomain, zone: host.zone, zoneId,
-    tunnelId, dnsRecordId, port: opts.port, proto: opts.proto,
+    tunnelId, dnsRecordId, port: opts.port, proto: opts.proto, host: opts.host,
     bootId: currentBootId(), state: "running",
   });
 }

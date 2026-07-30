@@ -13,6 +13,7 @@ import { currentBootId, patchEntry } from "../connector/registry.js";
 import { createTunnelSubdomain } from "../core/orchestrator-create.js";
 import { removeTunnelSubdomain } from "../core/orchestrator-manage.js";
 import { getProfile, parseTransportProtocol } from "../core/profiles.js";
+import { serviceUrl } from "../core/ingress.js";
 
 /**
  * Run every service in a saved profile at once (e.g. `cloudtunnel run mb` →
@@ -37,7 +38,7 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
   for (const svc of profile.services) {
     spin.message(`Creating ${svc.name} (:${svc.port})…`);
     const result = await createTunnelSubdomain(cf, {
-      port: svc.port, proto: svc.proto, name: svc.name,
+      port: svc.port, proto: svc.proto, name: svc.name, host: svc.host,
       zone: svc.domain ?? opts.domain ?? profile.domain, defaultZone: creds.defaultZone,
       force: opts.force, yes: true, // batch: never prompt per service
     });
@@ -48,7 +49,7 @@ async function runProfile(name: string, opts: RunOptions): Promise<void> {
       onExit: opts.detach ? undefined : () => say.warn(`Connector for ${fqdn} exited.`),
     });
     await patchEntry(fqdn, { pid: conn.pid, bootId: currentBootId(), logFile });
-    started.push({ fqdn, subdomain: result.host.subdomain, tunnelId: result.tunnelId, target: `${svc.proto}://localhost:${svc.port}`, pid: conn.pid });
+    started.push({ fqdn, subdomain: result.host.subdomain, tunnelId: result.tunnelId, target: serviceUrl(svc.proto, svc.host ?? "localhost", svc.port), pid: conn.pid });
   }
 
   // Detached: print URLs + pids and exit; the connectors keep running.

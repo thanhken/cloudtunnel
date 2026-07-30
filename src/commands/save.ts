@@ -22,7 +22,7 @@ export function registerSave(program: Command): void {
         if (entries.length === 0) {
           throw new CliError("No tunnels to snapshot.", { hint: "start some with `cloudtunnel up`, or pass services like api:3000" });
         }
-        services = entries.map((e) => ({ name: e.subdomain, port: e.port, proto: e.proto, domain: e.zone }));
+        services = entries.map((e) => ({ name: e.subdomain, port: e.port, proto: e.proto, domain: e.zone, ...(e.host ? { host: e.host } : {}) }));
       } else {
         if (specs.length === 0) {
           throw new CliError("No services given.", { hint: "e.g. `cloudtunnel save mb api:3000 web:5173`" });

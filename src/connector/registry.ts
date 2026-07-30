@@ -15,6 +15,7 @@ export interface RegistryEntry {
   dnsRecordId?: string;
   port: number;
   proto: "http" | "https";
+  host?: string; // forward target host (absent = localhost)
   pid?: number;
   bootId?: string;
   logFile?: string;
