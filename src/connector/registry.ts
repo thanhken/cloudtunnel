@@ -23,6 +23,13 @@ export interface RegistryEntry {
   state: EntryState;
 }
 
+/** The real hostname for an entry. `@` is the apex, keyed in the registry by the
+ * bare zone (NOT `@.zone`), so every entry→fqdn reconstruction must go through
+ * this — otherwise apex tunnels become untargetable and leak. */
+export function entryFqdn(e: Pick<RegistryEntry, "subdomain" | "zone">): string {
+  return e.subdomain === "@" ? e.zone : `${e.subdomain}.${e.zone}`;
+}
+
 type Registry = Record<string, RegistryEntry>;
 
 /** Stable per-boot id so a pid reused after a reboot is never mistaken for ours.
@@ -147,7 +154,7 @@ export async function reconcile(): Promise<RegistryEntry[]> {
   const entries = listEntries();
   for (const entry of entries) {
     if (entry.state === "running" && !(await isOurConnector(entry))) {
-      const fqdn = `${entry.subdomain}.${entry.zone}`;
+      const fqdn = entryFqdn(entry);
       await mutateRegistry((reg) => {
         const e = reg[fqdn];
         if (e) {

@@ -5,9 +5,10 @@ import { deleteDnsRecord, findCname, isManagedDns } from "../cloudflare/dns.js";
 import type { Tunnel } from "../cloudflare/types.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
-import { getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
+import { entryFqdn, getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
 import { stopConnector } from "../connector/process.js";
 import { serviceUrl } from "./ingress.js";
+import { serviceState } from "./systemd.js";
 
 const tunnelIdFromCname = (content: string): string => content.replace(/\.cfargotunnel\.com\.?$/, "");
 const isNotFound = (err: unknown): boolean => err instanceof CliError && err.status === 404;
@@ -21,20 +22,20 @@ export function resolveTarget(target: string): { fqdn: string; entry?: RegistryE
   const entries = listEntries();
   if (/^\d+$/.test(target)) {
     const byIndex = entries.find((e) => e.index === Number(target));
-    if (byIndex) return { fqdn: `${byIndex.subdomain}.${byIndex.zone}`, entry: byIndex };
+    if (byIndex) return { fqdn: entryFqdn(byIndex), entry: byIndex };
   }
   const byId = entries.filter((e) => e.tunnelId?.startsWith(target));
   const matches = byId.length > 0 ? byId : entries.filter((e) => e.subdomain === target);
   if (matches.length > 1) {
     throw new CliError(`"${target}" matches multiple subdomains.`, {
-      hint: `use a full hostname or a longer id: ${matches.map((m) => `${m.subdomain}.${m.zone}`).join(", ")}`,
+      hint: `use a full hostname or a longer id: ${matches.map(entryFqdn).join(", ")}`,
     });
   }
   const entry = matches[0];
   if (!entry) {
     throw new CliError(`No tracked subdomain matching "${target}".`, { hint: "see `cloudtunnel ls` for the #, name, or id" });
   }
-  return { fqdn: `${entry.subdomain}.${entry.zone}`, entry };
+  return { fqdn: entryFqdn(entry), entry };
 }
 
 export interface RemoveOptions { force?: boolean; dryRun?: boolean; quiet?: boolean }
@@ -90,20 +91,24 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
   if (!opts.quiet) say.ok(`Released ${fqdn}`);
 }
 
-export interface LsRow { num: string; hostname: string; port: string; state: string; pid: string; managed: boolean }
+export interface LsRow { num: string; url: string; target: string; state: string; service: string; pid: string; managed: boolean }
 
-/** Reconcile + list tracked subdomains (`#`, target, up/down, connector pid).
- * `all` also scans every zone for cfargotunnel CNAMEs created outside cloudtunnel. */
+/** Reconcile + list tracked subdomains: `# | URL | TARGET | STATE | SERVICE | PID`.
+ * SERVICE is the per-subdomain systemd unit's state ("-" when none). `all` also
+ * scans every zone for cfargotunnel CNAMEs created outside cloudtunnel. */
 export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsRow[]> {
   const entries = await reconcile();
   const tunnels = new Map((await listTunnels(cf)).map((t) => [t.id, t]));
   const rows: LsRow[] = entries.map((e) => {
+    const fqdn = entryFqdn(e);
     const gone = e.tunnelId ? !tunnels.has(e.tunnelId) : false;
+    const svc = serviceState(fqdn);
     return {
       num: e.index ? String(e.index) : "-",
-      hostname: `${e.subdomain}.${e.zone}`,
-      port: serviceUrl(e.proto, e.host ?? "localhost", e.port),
+      url: `https://${fqdn}`,
+      target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
       state: !gone && e.state === "running" ? "up" : "down",
+      service: svc === "none" ? "-" : svc,
       pid: e.state === "running" && e.pid ? String(e.pid) : "-",
       managed: true,
     };
@@ -111,11 +116,11 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsR
   if (opts.all) {
     const { listCargoCnames } = await import("../cloudflare/dns.js");
     const { listZones } = await import("../cloudflare/zones.js");
-    const tracked = new Set(entries.map((e) => `${e.subdomain}.${e.zone}`));
+    const tracked = new Set(entries.map(entryFqdn));
     for (const zone of await listZones(cf.token)) {
       for (const rec of await listCargoCnames(cf.token, zone.id)) {
         if (!tracked.has(rec.name)) {
-          rows.push({ num: "-", hostname: rec.name, port: "-", state: "unmanaged", pid: "-", managed: false });
+          rows.push({ num: "-", url: `https://${rec.name}`, target: "-", state: "unmanaged", service: "-", pid: "-", managed: false });
         }
       }
     }

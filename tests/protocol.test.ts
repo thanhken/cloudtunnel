@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTransportProtocol } from "../src/core/profiles.js";
+import { parseTransportProtocol } from "../src/core/transport-protocol.js";
 import { CliError } from "../src/ui/errors.js";
 
 describe("parseTransportProtocol", () => {

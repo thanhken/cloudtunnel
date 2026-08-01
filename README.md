@@ -16,21 +16,21 @@ Instant, self-owned tunnel sharing — the tunnel and DNS live in **your** Cloud
 ```bash
 npm i -g @iamken/cloudtunnel
 
-cloudtunnel login     # once — paste a Cloudflare token; account + domain auto-resolved
-cloudtunnel 3000      # → https://brave-otter-1a2b.example.com is live ✨
+cloudtunnel login      # once — paste a Cloudflare token; account + domain auto-resolved
+cloudtunnel 8080       # → https://brave-otter-1a2b.example.com is live ✨
 ```
 
-> 💨 Prefer less typing? **`ctun`** is a built-in short alias — `ctun 3000`, `ctun ls`, `ctun down 1`.
+> 💨 Prefer less typing? **`ctun`** is a built-in short alias — `ctun 8080`, `ctun ls`, `ctun delete 1`.
 
 ---
 
 ## ✨ Why cloudtunnel
 
 - 🔗 **Your domains, real subdomains** — routes through native Cloudflare Tunnel to `*.your-domain.com`, not a shared third-party host.
-- ⚡ **One command** — `cloudtunnel 3000` creates the tunnel, DNS, and connector, then prints a live HTTPS URL. It even asks you which domain + subdomain to use.
-- 🧭 **Just two states** — `up` brings a subdomain online; `down` (or Ctrl-C) releases it (deletes the tunnel + DNS). Re-running `up` always starts clean — no leftovers, no conflicts.
-- 🗂️ **Profiles** — save a whole project's services and bring them all up with `cloudtunnel run mb`.
-- 🌙 **Background mode** — `--detach` keeps connectors running after you close the terminal.
+- ⚡ **One command, one or many** — `cloudtunnel api:8080 web:5173` brings up several tunnels at once, each a live HTTPS URL.
+- 🎯 **Spec-driven** — a tunnel is just `[subdomain:]port[@host]`. No profiles to define, nothing to save.
+- 🧭 **Two states** — `up` brings subdomains online; `delete` (or Ctrl-C) releases them (removes the tunnel + DNS). Re-running `up` always starts clean.
+- 🌙 **Background & boot** — `--detach` keeps connectors running after you close the terminal; `--service` registers a systemd unit that survives reboots.
 - 🔒 **Secure by default** — token passed via env (never argv), stored `0600`, destructive ops are ownership-gated and re-verified.
 
 ---
@@ -38,32 +38,25 @@ cloudtunnel 3000      # → https://brave-otter-1a2b.example.com is live ✨
 ## 🚀 Quickstart
 
 ```bash
-cloudtunnel login                 # authenticate once
-cloudtunnel 3000                  # asks for domain + subdomain, then goes live
-cloudtunnel 3000 -s api           # skip the prompts: api.<your-domain>
-cloudtunnel 3000 -s api -d foo.io # subdomain + domain
-cloudtunnel 3000 -s @             # the root domain itself (example.com)
-cloudtunnel 3000 --source 192.168.1.5 # forward to another host/IP (IPv4/IPv6), not localhost
-cloudtunnel 3000 --detach         # run in the background
+cloudtunnel login                          # authenticate once
+cloudtunnel 8080                           # asks for a subdomain (+ domain), then goes live
+cloudtunnel api:8080                       # api.<your-domain> → localhost:8080
+cloudtunnel api:8080@192.168.1.20          # forward to another host/IP (IPv4/IPv6)
+cloudtunnel api:8080 web:5173 -d foo.io    # several tunnels at once, under foo.io
+cloudtunnel api:8080 --detach              # run in the background
+cloudtunnel api:8080 --service             # register a systemd boot service
 ```
 
-> Replacing an existing DNS record asks for confirmation first — pass `-y` to skip, or `-f` to also replace a non-tunnel record.
+A **spec** is `[subdomain:]port[@host]`:
 
-Run `cloudtunnel 3000` with no flags and it guides you:
+| Spec | Means |
+| --- | --- |
+| `8080` | random subdomain → `localhost:8080` |
+| `api:8080` | `api.<domain>` → `localhost:8080` |
+| `api:8080@192.168.1.20` | `api.<domain>` → `192.168.1.20:8080` (a LAN device, container, another server) |
+| `@:8080` | the root/apex domain itself |
 
-```
-┌  cloudtunnel
-◇  Choose a domain
-│  ● example.com   ○ foo.io
-◇  Subdomain
-│  api            (leave blank for a random name)
-◇  Connected
-│
-◇  Live ─────────────────────────────────────────╮
-│  https://api.example.com  →  http://localhost:3000
-│  Ctrl-C stops and releases this subdomain
-╰─────────────────────────────────────────────────╯
-```
+Run `cloudtunnel` with no arguments and it guides you (port → subdomain → domain). A missing subdomain becomes a friendly random name; a missing host is `localhost`. The local-service protocol is `--proto http|https` (default `http`); replacing an existing DNS record asks first — pass `-y` to skip, `-f` to also replace a non-tunnel record.
 
 ---
 
@@ -72,43 +65,24 @@ Run `cloudtunnel 3000` with no flags and it guides you:
 | Command | What it does |
 | --- | --- |
 | `cloudtunnel login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
-| `cloudtunnel <port>` · `up` | Bring a subdomain online. `-s/--subdomain`, `-d/--domain`, `--source`, `--detach`, `-f/--force`, `--proto`, `--protocol`. |
-| `cloudtunnel ls` · `ps` | List subdomains — `# · SUBDOMAIN · TARGET · STATE · PID`. `--all` scans the whole account. |
-| `cloudtunnel down <target>` · `rm` · `stop` | Release a subdomain — stop connector + delete tunnel + DNS. `--all`, `--dry-run`, `-f`. |
+| `cloudtunnel <spec…>` · `up` | Bring one or more tunnels online. `-d/--domain`, `--proto`, `--protocol`, `--detach`, `--service`, `-f/--force`, `-y/--yes`. |
+| `cloudtunnel ls` · `ps` | List tunnels — `# · URL · TARGET · STATE · SERVICE · PID`. `--all` scans the whole account. |
+| `cloudtunnel delete <target…>` | Release tunnel(s) — stop connector + delete tunnel + DNS + any systemd service. `--all`, `--dry-run`, `-f`. |
 | `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
-| `cloudtunnel zones` | List the domains in your account. |
-| `cloudtunnel save <profile> <svc…>` | Save a group of services. `svc` = `name:port[:proto][@host]`, `-d/--domain`, `--protocol`, or `--from-running`. |
-| `cloudtunnel run <profile> [--detach]` | Bring up every service in a profile at once. `--protocol` overrides the saved transport. |
-| `cloudtunnel profiles [--rm <name>]` | List saved profiles — `PROFILE · SERVICES · DOMAIN · PROTOCOL · SERVICE`. |
-| `cloudtunnel service enable\|disable\|status <profile>` | Register a profile as a systemd boot service (Linux, needs sudo). |
 
-> A **`<target>`** is a `#` number, a subdomain name, a full hostname, or a tunnel-id prefix — all shown in `ls`. `down` also accepts `rm` / `remove` / `delete` / `stop`.
+> A **`<target>`** is a `#` number, a subdomain name, a full hostname/URL, or a tunnel-id prefix — all shown in `ls`.
 
 ```
 $ cloudtunnel ls
-┌───┬─────────────────────┬────────────────────────┬───────┬───────┐
-│ # │ SUBDOMAIN           │ TARGET                 │ STATE │ PID   │
-├───┼─────────────────────┼────────────────────────┼───────┼───────┤
-│ 1 │ api.example.com     │ http://localhost:3000  │ up    │ 48213 │
-│ 2 │ web.example.com     │ https://localhost:5173 │ down  │ -     │
-└───┴─────────────────────┴────────────────────────┴───────┴───────┘
+┌───┬────────────────────────────┬────────────────────────┬───────┬─────────┬───────┐
+│ # │ URL                        │ TARGET                 │ STATE │ SERVICE │ PID   │
+├───┼────────────────────────────┼────────────────────────┼───────┼─────────┼───────┤
+│ 1 │ https://api.example.com    │ http://localhost:8080  │ up    │ active  │ 48213 │
+│ 2 │ https://web.example.com    │ https://localhost:5173 │ down  │ -       │ -     │
+└───┴────────────────────────────┴────────────────────────┴───────┴─────────┴───────┘
 
-$ cloudtunnel down 1        # release by number
-$ cloudtunnel down --all    # release everything
-```
-
----
-
-## 🗂️ Profiles
-
-Expose a whole project's services with one command:
-
-```bash
-cloudtunnel save mb api:3000 web:5173:https   # define the group (or: save mb --from-running)
-cloudtunnel save mb api:3000@192.168.1.5      # forward a service to another host/IP
-cloudtunnel run mb --detach                    # backend + frontend live in the background
-cloudtunnel logs api -f                         # follow one service's log
-cloudtunnel down --all                          # release them all
+$ cloudtunnel delete 1        # release by number
+$ cloudtunnel delete --all    # release everything
 ```
 
 ---
@@ -121,34 +95,41 @@ errors. Force **`http2`** (TCP) there:
 
 ```bash
 cloudtunnel up 8080 --protocol http2
-cloudtunnel save mb api:3000 web:5173 --protocol http2   # persist per profile
-cloudtunnel run mb --protocol http2                       # or override per run
 ```
 
 Values: `auto` (default) · `http2` · `quic`.
 
 ---
 
-## 🔁 Run on boot (systemd service)
+## 🔁 Run on boot (`--service`)
 
-Register a profile as a **system service** so it comes up automatically after a
-reboot (Linux + systemd; installs to `/etc/systemd/system`, so it needs sudo):
+Add **`--service`** to register each subdomain as a **systemd service** so it comes
+back automatically after a reboot (Linux + systemd; installs to
+`/etc/systemd/system`, so it needs sudo):
 
 ```bash
-cloudtunnel service enable mb --protocol http2   # install + enable + start now
-cloudtunnel service status mb                     # active | enabled | disabled | none
-cloudtunnel service disable mb                     # stop + disable + remove
+cloudtunnel api:8080 --service --protocol http2   # install + enable + start now
+cloudtunnel api:8080 web:5173 --service           # one unit per subdomain
+cloudtunnel ls                                     # the SERVICE column shows each unit's state
+cloudtunnel delete api                             # stops + removes the tunnel and its unit
 ```
 
-The `SERVICE` column in `cloudtunnel profiles` shows each profile's current state.
+Each subdomain gets its own unit, so deleting one never touches the others. The
+concrete subdomain is baked into the unit, so the URL stays stable across reboots.
 
 ---
 
-## 🧭 Two states: up & down
+## 🧭 Two states: up & delete
 
-There are only two states. **`up`** brings a subdomain online (creating the tunnel + DNS). **`down`** — or pressing <kbd>Ctrl-C</kbd> in a foreground `up` — **releases** it: it stops the connector and deletes the tunnel + DNS on Cloudflare. Running `up` again recreates it cleanly (any leftover tunnel record for that name is cleaned up first, so you never hit conflicts).
+There are only two states. **`up`** brings subdomains online (creating the tunnel
++ DNS). **`delete`** — or pressing <kbd>Ctrl-C</kbd> in a foreground `up` —
+**releases** them: it stops the connector and deletes the tunnel + DNS on
+Cloudflare (and any `--service` unit). Running `up` again recreates cleanly (any
+leftover tunnel record for that name is cleaned up first, so you never hit conflicts).
 
-Add **`--detach`** to keep a connector running in the **background** after the CLI exits (and after you close the terminal). Release it later with `cloudtunnel down <target>` (or `--all`) and tail its output with `cloudtunnel logs <target> -f`.
+Add **`--detach`** to keep connectors running in the **background** after the CLI
+exits. Release them later with `cloudtunnel delete <target>` (or `--all`) and tail
+their output with `cloudtunnel logs <target> -f`.
 
 ---
 
@@ -173,7 +154,25 @@ Provide it via (highest precedence first): `CLOUDFLARE_API_TOKEN` env → `cloud
 
 - **Node.js ≥ 20**
 - **`cloudflared`** on your `PATH` — install via `brew install cloudflared`, your package manager, or the [releases page](https://github.com/cloudflare/cloudflared/releases).
-  <br/>_(Auto-download is built in and fetches a pinned, SHA256-verified binary, but stays disabled until release checksums are pinned — treat `cloudflared` as a prerequisite for now.)_
+
+---
+
+## 🧳 Upgrading from 0.3.x (profiles removed)
+
+`save`, `run`, `profiles`, `zones`, and the `service …` sub-commands are gone —
+everything is now inline specs on `up`, and reads live in `ls`:
+
+| Old | New |
+| --- | --- |
+| `run mb` | `cloudtunnel api:8080 web:5173` (pass the specs directly) |
+| `service enable mb --protocol http2` | `cloudtunnel <spec…> --service --protocol http2` |
+| `service disable mb` / `profiles --rm mb` | `cloudtunnel delete <target>` |
+| `service status` / `profiles` | `cloudtunnel ls` (SERVICE column) |
+| `zones` | `cloudtunnel login --status` (also a ZONE in each `ls` URL) |
+| `down <t>` / `rm <t>` | `cloudtunnel delete <t>` |
+
+Profiles that were registered as boot services are **migrated automatically** to
+the new per-subdomain units the first time you run cloudtunnel in a terminal.
 
 ---
 
@@ -181,10 +180,10 @@ Provide it via (highest precedence first): `CLOUDFLARE_API_TOKEN` env → `cloud
 
 | Symptom | Cause & fix |
 | --- | --- |
-| **HTTP 1016** / subdomain won't load | The connector isn't running (`STATE = down` in `ls`). Bring it back up: `cloudtunnel <port> -s <name>`. |
-| **`down` says "active connections"** | Handled automatically — cloudtunnel cleans up the connections and retries the delete. |
+| **HTTP 1016** / subdomain won't load | The connector isn't running (`STATE = down` in `ls`). Bring it back up: `cloudtunnel <spec>`. |
+| **`delete` says "active connections"** | Handled automatically — cloudtunnel cleans up the connections and retries the delete. |
 | **"grey-clouded" error** | The zone couldn't proxy the record; cfargotunnel routing needs an orange-cloud (proxied) CNAME. |
-| **A DNS record already occupies the name** | Pick another `-s`/`-d`, or pass `-f/--force` to replace a non-tunnel record. |
+| **A DNS record already occupies the name** | Pick another subdomain/domain, or pass `-f/--force` to replace a non-tunnel record. |
 
 ---
 

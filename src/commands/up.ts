@@ -1,51 +1,57 @@
 import type { Command } from "commander";
-import { join } from "node:path";
-import { readFileSync } from "node:fs";
 import * as clack from "@clack/prompts";
-import { CliError, reportError } from "../ui/errors.js";
-import { dim, formatRoute, say, selectOne } from "../ui/output.js";
+import { CliError } from "../ui/errors.js";
+import { say, selectOne } from "../ui/output.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { listZones } from "../cloudflare/zones.js";
 import type { Credentials } from "../config/store.js";
-import { logDir } from "../config/paths.js";
 import { ensureCloudflared } from "../connector/binary.js";
-import { startConnector } from "../connector/process.js";
-import { waitHealthy } from "../connector/health.js";
-import { currentBootId, patchEntry } from "../connector/registry.js";
-import { createTunnelSubdomain } from "../core/orchestrator-create.js";
-import { removeTunnelSubdomain } from "../core/orchestrator-manage.js";
-import { parseTransportProtocol } from "../core/profiles.js";
-import { validateHost, serviceUrl } from "../core/ingress.js";
+import type { CreateOptions } from "../core/orchestrator-create.js";
+import { startTunnels } from "../core/up-runner.js";
+import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
+import { parseTransportProtocol, type TransportProtocol } from "../core/transport-protocol.js";
+import { randomSlug } from "../core/slug.js";
+import { assertSystemd, installServiceForSpec, serviceName } from "../core/systemd.js";
 
 interface UpOptions {
-  subdomain?: string;
   domain?: string;
-  name?: string; // alias of --subdomain
-  zone?: string; // alias of --domain
-  hostname?: string;
-  source?: string; // forward target host/IP (default localhost)
-  detach?: boolean;
   proto: "http" | "https";
   protocol?: string; // edge transport: auto | http2 | quic
+  detach?: boolean;
+  service?: boolean; // register each subdomain as a systemd boot service
   force?: boolean;
   yes?: boolean;
 }
 
-function parsePort(port: string): number {
-  const n = Number(port);
-  if (!Number.isInteger(n) || n < 1 || n > 65535) {
-    throw new CliError(`Invalid port: ${port}`, { hint: "use a number 1–65535, e.g. `cloudtunnel 3000`" });
+function promptOrExit<T>(value: T | symbol): T {
+  if (clack.isCancel(value)) {
+    clack.cancel("Cancelled.");
+    process.exit(130);
   }
-  return n;
+  return value as T;
 }
 
-/** Which domain to use: `-d` → the single zone → an interactive picker (TTY) →
- * saved default (non-TTY) → error. `-d` is skipped when `--hostname` is given. */
-async function resolveDomain(cf: Cf, opts: UpOptions, creds: Credentials): Promise<string | undefined> {
-  if (opts.hostname) return undefined;
-  const explicit = opts.domain ?? opts.zone;
-  if (explicit) return explicit;
+/** Interactive port prompt (0-arg wizard). */
+async function promptPort(): Promise<number> {
+  const input = promptOrExit(
+    await clack.text({
+      message: "Port to expose",
+      placeholder: "e.g. 3000",
+      validate: (v) => {
+        const n = Number(v);
+        if (!Number.isInteger(n) || n < 1 || n > 65535) return "Enter a port 1–65535";
+        return undefined;
+      },
+    }),
+  );
+  return Number(input);
+}
+
+/** The domain for the whole batch: `-d` → single zone → picker (TTY) → saved
+ * default (non-TTY) → error. */
+async function resolveDomain(cf: Cf, opts: UpOptions, creds: Credentials): Promise<string> {
+  if (opts.domain) return opts.domain;
   const zones = await listZones(cf.token);
   if (zones.length === 0) throw new CliError("No domains found in this Cloudflare account.");
   if (zones.length === 1) return zones[0]!.name;
@@ -54,129 +60,89 @@ async function resolveDomain(cf: Cf, opts: UpOptions, creds: Credentials): Promi
   throw new CliError("Multiple domains in this account — pick one.", { hint: "pass -d <domain>" });
 }
 
-/** The subdomain to use: `-s` → typed at the prompt → a friendly random name if
- * left blank (or non-TTY). */
-async function resolveSubdomain(opts: UpOptions): Promise<string | undefined> {
-  const explicit = opts.subdomain ?? opts.name;
-  if (explicit || opts.hostname) return explicit;
-  if (!process.stdin.isTTY) return undefined; // random
-  const input = await clack.text({ message: "Subdomain", placeholder: "blank = random · @ = root domain" });
-  if (clack.isCancel(input)) {
-    clack.cancel("Cancelled.");
-    process.exit(130);
-  }
+/** The subdomain for a spec: explicit in the spec → used as-is; otherwise prompt
+ * (TTY, blank = random) or random (non-TTY / `-y`). Returns undefined for random. */
+async function resolveSpecSubdomain(spec: TunnelSpec, opts: UpOptions): Promise<string | undefined> {
+  if (spec.subdomain !== undefined) return spec.subdomain;
+  if (opts.yes || !process.stdin.isTTY) return undefined; // random
+  const input = promptOrExit(
+    await clack.text({ message: `Subdomain for :${spec.port}`, placeholder: "blank = random · @ = root domain" }),
+  );
   return (input as string).trim() || undefined; // blank → random
 }
 
-/** Print the last few lines of a connector logfile (shown when it crashes). */
-function showLogTail(logFile: string): void {
-  try {
-    const tail = readFileSync(logFile, "utf8").trim().split("\n").slice(-8).join("\n");
-    if (tail) say.dim(tail);
-  } catch {
-    /* no log yet */
+async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
+  const protocol: TransportProtocol | undefined = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
+  // Parse specs up front (fail fast on a typo before touching the network). 0 args
+  // → wizard, which needs a TTY.
+  const parsed: TunnelSpec[] | null = specArgs.length ? specArgs.map(parseTunnelSpec) : null;
+  if (parsed === null && !process.stdin.isTTY) {
+    throw new CliError("No tunnel spec given.", { hint: "e.g. cloudtunnel api:8080" });
   }
-}
 
-async function runUp(portArg: string, opts: UpOptions): Promise<void> {
-  const port = parsePort(portArg);
-  const protocol = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
-  const host = opts.source ? validateHost(opts.source) : undefined;
   const creds = await ensureAuth();
   const cf = resolveCf();
   const bin = await ensureCloudflared();
 
   if (process.stdout.isTTY) clack.intro("cloudtunnel");
+
+  const specs: TunnelSpec[] = parsed ?? [{ port: await promptPort() }];
   const domain = await resolveDomain(cf, opts, creds);
-  const subdomain = await resolveSubdomain(opts);
 
-  // No spinner around create: it may prompt (domain/subdomain already handled,
-  // plus a "replace existing record?" confirm inside createTunnelSubdomain).
-  const result = await createTunnelSubdomain(cf, {
-    port, proto: opts.proto, name: subdomain, zone: domain,
-    hostname: opts.hostname, host, defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,
-  });
-  const fqdn = result.host.hostname;
-  const logLabel = result.host.subdomain === "@" ? "root" : result.host.subdomain;
-  const logFile = join(logDir, `${logLabel}.log`);
-  const target = serviceUrl(opts.proto, host ?? "localhost", port);
+  // Build create-opts per spec. `--service` needs a concrete subdomain baked in
+  // (never random-per-boot), so materialise a random one now when unnamed.
+  const items: CreateOptions[] = [];
+  for (const spec of specs) {
+    let name = await resolveSpecSubdomain(spec, opts);
+    if (opts.service && name === undefined) name = randomSlug();
+    items.push({
+      port: spec.port, proto: opts.proto, name, zone: domain, host: spec.host,
+      defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,
+    });
+  }
 
-  if (opts.detach) {
-    const started = startConnector({ bin, token: result.token, detach: true, logFile, protocol });
-    await patchEntry(fqdn, { pid: started.pid, bootId: currentBootId(), logFile });
-    clack.note(formatRoute(fqdn, target), `pid ${started.pid}`);
-    if (process.stdout.isTTY) clack.outro(`Stop it with: cloudtunnel down ${result.host.subdomain}`);
+  if (opts.service) {
+    registerServices(items, domain, opts.proto, protocol);
     return;
   }
 
-  const spin = clack.spinner();
-  let spinnerActive = true;
-  const stopSpin = (msg: string) => {
-    if (spinnerActive) {
-      spinnerActive = false;
-      spin.stop(msg);
-    }
-  };
-  spin.start("Connecting to the Cloudflare edge…");
-  const controller = new AbortController();
-  // Foreground is up-while-running: any exit (Ctrl-C or a connector crash)
-  // releases the tunnel + DNS (2-state model).
-  let tornDown = false;
-  const teardown = async (exitCode: number): Promise<void> => {
-    if (tornDown) return;
-    tornDown = true;
-    controller.abort();
-    stopSpin("Stopping…");
-    try {
-      await removeTunnelSubdomain(cf, fqdn, { force: true, quiet: true });
-      clack.outro(`Stopped · ${fqdn} released`);
-    } catch (err) {
-      reportError(err);
-    } finally {
-      process.exit(exitCode);
-    }
-  };
+  await startTunnels(cf, bin, items, { detach: opts.detach, protocol });
+}
 
-  const started = startConnector({
-    bin, token: result.token, detach: false, logFile, protocol,
-    onExit: (code) => {
-      if (!tornDown) {
-        stopSpin("cloudflared exited");
-        showLogTail(logFile);
-        void teardown(code ?? 1);
-      }
-    },
-  });
-  await patchEntry(fqdn, { pid: started.pid, bootId: currentBootId(), logFile });
-  for (const sig of ["SIGINT", "SIGHUP", "SIGTERM"] as const) {
-    process.on(sig, () => void teardown(0));
+/** Install + enable a systemd boot unit per subdomain (systemd runs each now and
+ * on boot), then exit. `--detach` is a no-op here — systemd already backgrounds. */
+function registerServices(
+  items: CreateOptions[], domain: string,
+  proto: "http" | "https", protocol?: TransportProtocol,
+): void {
+  assertSystemd();
+  if (!protocol) {
+    say.warn("No edge protocol set — cloudflared will pick QUIC, which some networks drop.");
+    say.dim("  → add --protocol http2 for UDP-hostile networks");
   }
-
-  const health = await waitHealthy(cf, result.tunnelId, { signal: controller.signal });
-  if (health === "healthy") {
-    stopSpin("Connected");
-    clack.note(`${formatRoute(fqdn, target)}\n${dim("Ctrl-C stops and releases this subdomain")}`, "Live");
-  } else if (health === "provisioning") {
-    stopSpin("Provisioning");
-    say.warn(`${fqdn} is not healthy yet — it should be live shortly.`);
+  const done: string[] = [];
+  for (const item of items) {
+    const subdomain = item.name!; // concrete (baked above)
+    const fqdn = subdomain === "@" ? domain : `${subdomain}.${domain}`;
+    installServiceForSpec({ subdomain, port: item.port, host: item.host, zone: domain, proto, protocol });
+    done.push(`${serviceName(fqdn)} → https://${fqdn}`);
   }
+  say.ok(`Registered ${done.length} boot service(s):`);
+  for (const line of done) say.dim(`  ${line}`);
+  say.dim("  → check them: cloudtunnel ls   ·   remove: cloudtunnel delete <#>");
 }
 
 export function registerUp(program: Command): void {
   program
-    .command("up")
-    .argument("<port>", "local port to expose (e.g. 3000)")
-    .description("Expose a local port at an HTTPS subdomain (also: `cloudtunnel <port>`)")
-    .option("-s, --subdomain <name>", "subdomain label (prompted, or random if left blank)")
-    .option("-d, --domain <domain>", "domain to create the subdomain under (prompted from a list if unset)")
-    .option("--name <name>", "alias of --subdomain")
-    .option("--zone <domain>", "alias of --domain")
-    .option("--hostname <fqdn>", "full hostname override (instead of --subdomain + --domain)")
-    .option("--source <host>", "forward to this host/IP instead of localhost (e.g. a LAN device or ::1)")
-    .option("--detach", "run the connector in the background")
-    .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
-    .option("-y, --yes", "don't ask before replacing an existing record")
+    .command("up", { isDefault: true })
+    .argument("[specs...]", "tunnels to start: [subdomain:]port[@host]  (e.g. api:8080 web:8081@localhost)")
+    .description("Start one or more tunnels (also: `cloudtunnel 8080`)")
+    .option("-d, --domain <domain>", "domain for the subdomains (prompted from a list if unset)")
     .option("--proto <proto>", "local service protocol: http | https", "http")
     .option("--protocol <proto>", "cloudflared edge transport: auto | http2 | quic (http2 for UDP-hostile networks)")
-    .action((port: string, opts: UpOptions) => runUp(port, opts));
+    .option("--detach", "run the connectors in the background")
+    .option("--service", "register each subdomain as a systemd boot service (Linux; needs sudo)")
+    .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
+    .option("-y, --yes", "don't prompt; don't ask before replacing an existing record")
+    .action((specs: string[], opts: UpOptions) => runUp(specs, opts));
 }
