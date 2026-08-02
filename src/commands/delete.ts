@@ -5,20 +5,19 @@ import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { entryFqdn, listEntries } from "../connector/registry.js";
 import { removeTunnelSubdomain, resolveTarget } from "../core/orchestrator-manage.js";
-import { serviceName, serviceState, uninstallService } from "../core/systemd.js";
+import { serviceName, serviceState, uninstallService } from "../core/service.js";
 
 interface DeleteOptions { all?: boolean; force?: boolean; dryRun?: boolean }
 
-/** Release one subdomain by its resolved fqdn, then drop its systemd unit if any. */
+/** Remove a subdomain's boot service (if any) first so its supervisor can't
+ * restart the connector mid-teardown, then release the tunnel + DNS. */
 async function deleteOne(cf: Cf, fqdn: string, opts: DeleteOptions): Promise<void> {
+  const hasService = serviceState(fqdn) !== "none";
+  if (hasService && !opts.dryRun) uninstallService(fqdn);
   await removeTunnelSubdomain(cf, fqdn, { force: opts.force, dryRun: opts.dryRun });
-  if (serviceState(fqdn) === "none") return;
-  if (opts.dryRun) {
-    say.info(`Would also remove boot service ${serviceName(fqdn)}`);
-    return;
-  }
-  uninstallService(fqdn);
-  say.ok(`Removed boot service ${serviceName(fqdn)}`);
+  if (!hasService) return;
+  if (opts.dryRun) say.info(`Would also remove boot service ${serviceName(fqdn)}`);
+  else say.ok(`Removed boot service ${serviceName(fqdn)}`);
 }
 
 export function registerDelete(program: Command): void {

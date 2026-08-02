@@ -8,7 +8,7 @@ import { say } from "../ui/output.js";
 import { entryFqdn, getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
 import { stopConnector } from "../connector/process.js";
 import { serviceUrl } from "./ingress.js";
-import { serviceState } from "./systemd.js";
+import { serviceState } from "./service.js";
 
 const tunnelIdFromCname = (content: string): string => content.replace(/\.cfargotunnel\.com\.?$/, "");
 const isNotFound = (err: unknown): boolean => err instanceof CliError && err.status === 404;

@@ -30,7 +30,7 @@ cloudtunnel 8080       # → https://brave-otter-1a2b.example.com is live ✨
 - ⚡ **One command, one or many** — `cloudtunnel api:8080 web:5173` brings up several tunnels at once, each a live HTTPS URL.
 - 🎯 **Spec-driven** — a tunnel is just `[subdomain:]port[@host]`. No profiles to define, nothing to save.
 - 🧭 **Two states** — `up` brings subdomains online; `delete` (or Ctrl-C) releases them (removes the tunnel + DNS). Re-running `up` always starts clean.
-- 🌙 **Background & boot** — `--detach` keeps connectors running after you close the terminal; `--service` registers a systemd unit that survives reboots.
+- 🌙 **Background & boot** — `--detach` keeps connectors running after you close the terminal; `--service` registers a native OS service (systemd · launchd · Task Scheduler) that survives restarts.
 - 🔒 **Secure by default** — token passed via env (never argv), stored `0600`, destructive ops are ownership-gated and re-verified.
 
 ---
@@ -44,7 +44,7 @@ cloudtunnel api:8080                       # api.<your-domain> → localhost:808
 cloudtunnel api:8080@192.168.1.20          # forward to another host/IP (IPv4/IPv6)
 cloudtunnel api:8080 web:5173 -d foo.io    # several tunnels at once, under foo.io
 cloudtunnel api:8080 --detach              # run in the background
-cloudtunnel api:8080 --service             # register a systemd boot service
+cloudtunnel api:8080 --service             # register a boot service (Linux/macOS/Windows)
 ```
 
 A **spec** is `[subdomain:]port[@host]`:
@@ -67,7 +67,7 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 | `cloudtunnel login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
 | `cloudtunnel <spec…>` · `up` | Bring one or more tunnels online. `-d/--domain`, `--proto`, `--protocol`, `--detach`, `--service`, `-f/--force`, `-y/--yes`. |
 | `cloudtunnel ls` · `ps` | List tunnels — `# · URL · TARGET · STATE · SERVICE · PID`. `--all` scans the whole account. |
-| `cloudtunnel delete <target…>` | Release tunnel(s) — stop connector + delete tunnel + DNS + any systemd service. `--all`, `--dry-run`, `-f`. |
+| `cloudtunnel delete <target…>` | Release tunnel(s) — stop connector + delete tunnel + DNS + any boot service. `--all`, `--dry-run`, `-f`. |
 | `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
 
 > A **`<target>`** is a `#` number, a subdomain name, a full hostname/URL, or a tunnel-id prefix — all shown in `ls`.
@@ -103,19 +103,25 @@ Values: `auto` (default) · `http2` · `quic`.
 
 ## 🔁 Run on boot (`--service`)
 
-Add **`--service`** to register each subdomain as a **systemd service** so it comes
-back automatically after a reboot (Linux + systemd; installs to
-`/etc/systemd/system`, so it needs sudo):
+Add **`--service`** to register each subdomain as a native OS service so it comes
+back automatically — cross-platform:
+
+| OS | Backend | Autostart | Privilege |
+| --- | --- | --- | --- |
+| Linux | systemd unit (`/etc/systemd/system`) | boot | sudo |
+| macOS | launchd LaunchAgent (`~/Library/LaunchAgents`) | login | none |
+| Windows | Task Scheduler (`cloudtunnel\<name>`) | logon | none |
 
 ```bash
 cloudtunnel api:8080 --service --protocol http2   # install + enable + start now
-cloudtunnel api:8080 web:5173 --service           # one unit per subdomain
-cloudtunnel ls                                     # the SERVICE column shows each unit's state
-cloudtunnel delete api                             # stops + removes the tunnel and its unit
+cloudtunnel api:8080 web:5173 --service           # one service per subdomain
+cloudtunnel ls                                     # the SERVICE column shows each one's state
+cloudtunnel delete api                             # stops + removes the tunnel and its service
 ```
 
-Each subdomain gets its own unit, so deleting one never touches the others. The
-concrete subdomain is baked into the unit, so the URL stays stable across reboots.
+Each subdomain gets its own service, so deleting one never touches the others.
+The concrete subdomain is baked in, so the URL stays stable across restarts. All
+backends restart the connector on failure.
 
 ---
 

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { profilesFile } from "./paths.js";
 import { confirm, say } from "../ui/output.js";
-import { installServiceForSpec, legacyUnitExists, removeLegacyUnit } from "../core/systemd.js";
+import { installServiceForSpec, legacyUnitExists, removeLegacyUnit } from "../core/service.js";
 import type { TransportProtocol } from "../core/transport-protocol.js";
 
 // Shape of the retired profiles file (self-contained; no dependency on the

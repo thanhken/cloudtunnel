@@ -12,7 +12,7 @@ import { startTunnels } from "../core/up-runner.js";
 import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
 import { parseTransportProtocol, type TransportProtocol } from "../core/transport-protocol.js";
 import { randomSlug } from "../core/slug.js";
-import { assertSystemd, installServiceForSpec, serviceName } from "../core/systemd.js";
+import { assertServiceSupported, installServiceForSpec, serviceName } from "../core/service.js";
 
 interface UpOptions {
   domain?: string;
@@ -115,7 +115,7 @@ function registerServices(
   items: CreateOptions[], domain: string,
   proto: "http" | "https", protocol?: TransportProtocol,
 ): void {
-  assertSystemd();
+  assertServiceSupported();
   if (!protocol) {
     say.warn("No edge protocol set — cloudflared will pick QUIC, which some networks drop.");
     say.dim("  → add --protocol http2 for UDP-hostile networks");
@@ -141,7 +141,7 @@ export function registerUp(program: Command): void {
     .option("--proto <proto>", "local service protocol: http | https", "http")
     .option("--protocol <proto>", "cloudflared edge transport: auto | http2 | quic (http2 for UDP-hostile networks)")
     .option("--detach", "run the connectors in the background")
-    .option("--service", "register each subdomain as a systemd boot service (Linux; needs sudo)")
+    .option("--service", "register each subdomain as a boot service (Linux systemd · macOS launchd · Windows Task Scheduler)")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't prompt; don't ask before replacing an existing record")
     .action((specs: string[], opts: UpOptions) => runUp(specs, opts));
