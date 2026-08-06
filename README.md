@@ -164,7 +164,8 @@ Provide it via (highest precedence first): `CLOUDFLARE_API_TOKEN` env → `cloud
 ## ✅ Requirements
 
 - **Node.js ≥ 20**
-- **`cloudflared`** on your `PATH` — install via `brew install cloudflared`, your package manager, or the [releases page](https://github.com/cloudflare/cloudflared/releases).
+- **`cloudflared`** — auto-installed on first run (pinned version, checksum-verified, cached under `~/.config/cloudtunnel/bin`). No manual step needed. If `cloudflared` is already on your `PATH`, that copy is used instead.
+  - _Alpine/musl, Windows-on-ARM edge cases, or other unsupported targets:_ install manually from the [releases page](https://github.com/cloudflare/cloudflared/releases) (or `brew install cloudflared`).
 
 ---
 
