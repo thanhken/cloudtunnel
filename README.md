@@ -123,6 +123,11 @@ Each subdomain gets its own service, so deleting one never touches the others.
 The concrete subdomain is baked in, so the URL stays stable across restarts. All
 backends restart the connector on failure.
 
+After installing, `--service` waits for each service to bring its connector up
+(up to 20s) and prints the `ls` view, so the tunnels show in `cloudtunnel ls`/`ps`
+right away. A service that doesn't report up in time is flagged with where to read
+its logs (e.g. it failed to start, or resolved a different config dir).
+
 ---
 
 ## 🧭 Two states: up & delete

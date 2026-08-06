@@ -1,5 +1,7 @@
+import { join } from "node:path";
 import { CliError } from "../ui/errors.js";
-import { describeService, type ServiceDescriptor, type ServiceSpecParams, type ServiceState } from "./service-exec.js";
+import { logDir } from "../config/paths.js";
+import { describeService, serviceSlug, type ServiceDescriptor, type ServiceSpecParams, type ServiceState } from "./service-exec.js";
 import * as systemd from "./service-systemd.js";
 import * as launchd from "./service-launchd.js";
 import * as windows from "./service-windows.js";
@@ -60,6 +62,20 @@ export function uninstallService(fqdn: string): void {
 /** Current state of a subdomain's service ("none" on an unsupported OS). */
 export function serviceState(fqdn: string): ServiceState {
   return pick()?.state(fqdn) ?? "none";
+}
+
+/** Platform command/path to inspect why a subdomain's boot service isn't up yet. */
+export function serviceLogsHint(fqdn: string): string {
+  switch (process.platform) {
+    case "linux":
+      return `journalctl -u ${serviceName(fqdn)} -n 50 --no-pager`;
+    case "darwin":
+      return `tail ${join(logDir, `${serviceSlug(fqdn)}.service.log`)}`;
+    case "win32":
+      return `schtasks /Query /TN "${serviceName(fqdn)}" /V /FO LIST`;
+    default:
+      return "check your OS service logs";
+  }
 }
 
 // --- Legacy (Linux-only) migration from the old profile-based units ---

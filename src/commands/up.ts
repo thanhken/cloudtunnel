@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import * as clack from "@clack/prompts";
 import { CliError } from "../ui/errors.js";
-import { say, selectOne } from "../ui/output.js";
+import { say, selectOne, printTable } from "../ui/output.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { listZones } from "../cloudflare/zones.js";
@@ -9,10 +9,12 @@ import type { Credentials } from "../config/store.js";
 import { ensureCloudflared } from "../connector/binary.js";
 import type { CreateOptions } from "../core/orchestrator-create.js";
 import { startTunnels } from "../core/up-runner.js";
+import { listAll } from "../core/orchestrator-manage.js";
+import { getEntry } from "../connector/registry.js";
 import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
 import { parseTransportProtocol, type TransportProtocol } from "../core/transport-protocol.js";
 import { randomSlug } from "../core/slug.js";
-import { assertServiceSupported, installServiceForSpec, serviceName } from "../core/service.js";
+import { assertServiceSupported, installServiceForSpec, serviceLogsHint } from "../core/service.js";
 
 interface UpOptions {
   domain?: string;
@@ -102,34 +104,77 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   }
 
   if (opts.service) {
-    registerServices(items, domain, opts.proto, protocol);
+    await registerServices(cf, items, domain, opts.proto, protocol);
     return;
   }
 
   await startTunnels(cf, bin, items, { detach: opts.detach, protocol });
 }
 
-/** Install + enable a systemd boot unit per subdomain (systemd runs each now and
- * on boot), then exit. `--detach` is a no-op here — systemd already backgrounds. */
-function registerServices(
-  items: CreateOptions[], domain: string,
+/** How long `--service` waits for the boot services to bring their connectors up
+ * before showing the `ls` view (registry "running" lands within a few seconds). */
+const SERVICE_UP_TIMEOUT_MS = 20_000;
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Install + start a boot service per subdomain (systemd `enable --now` · launchd
+ * `RunAtLoad` · Task Scheduler `/Run` all start it now and on boot), then WAIT for
+ * the services to bring their connectors up and show the `ls` view. The services
+ * own the connector; the CLI just watches the registry they write — so `ls`/`ps`
+ * shows them right after this returns instead of after an invisible delay.
+ * `--detach` is a no-op here — the service already backgrounds.
+ */
+async function registerServices(
+  cf: Cf, items: CreateOptions[], domain: string,
   proto: "http" | "https", protocol?: TransportProtocol,
-): void {
+): Promise<void> {
   assertServiceSupported();
   if (!protocol) {
     say.warn("No edge protocol set — cloudflared will pick QUIC, which some networks drop.");
     say.dim("  → add --protocol http2 for UDP-hostile networks");
   }
-  const done: string[] = [];
+  const fqdns: string[] = [];
   for (const item of items) {
     const subdomain = item.name!; // concrete (baked above)
     const fqdn = subdomain === "@" ? domain : `${subdomain}.${domain}`;
     installServiceForSpec({ subdomain, port: item.port, host: item.host, zone: domain, proto, protocol });
-    done.push(`${serviceName(fqdn)} → https://${fqdn}`);
+    fqdns.push(fqdn);
   }
-  say.ok(`Registered ${done.length} boot service(s):`);
-  for (const line of done) say.dim(`  ${line}`);
-  say.dim("  → check them: cloudtunnel ls   ·   remove: cloudtunnel delete <#>");
+  say.ok(`Registered ${fqdns.length} boot service(s) — waiting for them to come up…`);
+
+  const notUp = await waitServicesUp(fqdns, SERVICE_UP_TIMEOUT_MS);
+
+  const rows = await listAll(cf);
+  if (rows.length) {
+    printTable(
+      ["#", "URL", "TARGET", "STATE", "SERVICE", "PID"],
+      rows.map((r) => [r.num, r.url, r.target, r.state, r.service, r.pid]),
+    );
+  }
+  // A service that never reports up either failed to start or resolved a
+  // different config dir than this shell — point at its logs so it's not silent.
+  if (notUp.length) {
+    say.warn(`${notUp.length} service(s) didn't report up within ${SERVICE_UP_TIMEOUT_MS / 1000}s:`);
+    for (const fqdn of notUp) say.dim(`  ${fqdn} → ${serviceLogsHint(fqdn)}`);
+  }
+  say.dim("  → manage: cloudtunnel ls   ·   remove: cloudtunnel delete <#>");
+}
+
+/** Poll the registry until every fqdn's service has a live connector (state
+ * "running" + a pid), or the timeout elapses. Returns the fqdns still not up.
+ * Reads the registry the boot service writes; a pid means `ls` will show "up". */
+async function waitServicesUp(fqdns: string[], timeoutMs: number): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  const pending = new Set(fqdns);
+  while (pending.size > 0) {
+    for (const fqdn of [...pending]) {
+      const entry = getEntry(fqdn);
+      if (entry?.state === "running" && entry.pid) pending.delete(fqdn);
+    }
+    if (pending.size === 0 || Date.now() >= deadline) break;
+    await delay(500);
+  }
+  return [...pending];
 }
 
 export function registerUp(program: Command): void {
