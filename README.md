@@ -66,7 +66,7 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 | --- | --- |
 | `cloudtunnel login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
 | `cloudtunnel <spec…>` · `up` | Bring one or more tunnels online. `-d/--domain`, `--proto`, `--protocol`, `--detach`, `--service`, `-f/--force`, `-y/--yes`. |
-| `cloudtunnel ls` · `ps` | List tunnels — `# · URL · TARGET · STATE · SERVICE · PID`. `--all` scans the whole account. |
+| `cloudtunnel ls` · `ps` | List tunnels — `# · URL · TARGET · PROTOCOL · STATE · SERVICE · PID`. `--all` scans the whole account. |
 | `cloudtunnel delete <target…>` | Release tunnel(s) — stop connector + delete tunnel + DNS + any boot service. `--all`, `--dry-run`, `-f`. |
 | `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
 
@@ -74,12 +74,12 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 
 ```
 $ cloudtunnel ls
-┌───┬────────────────────────────┬────────────────────────┬───────┬─────────┬───────┐
-│ # │ URL                        │ TARGET                 │ STATE │ SERVICE │ PID   │
-├───┼────────────────────────────┼────────────────────────┼───────┼─────────┼───────┤
-│ 1 │ https://api.example.com    │ http://localhost:8080  │ up    │ active  │ 48213 │
-│ 2 │ https://web.example.com    │ https://localhost:5173 │ down  │ -       │ -     │
-└───┴────────────────────────────┴────────────────────────┴───────┴─────────┴───────┘
+┌───┬────────────────────────────┬────────────────────────┬──────────┬───────┬─────────┬───────┐
+│ # │ URL                        │ TARGET                 │ PROTOCOL │ STATE │ SERVICE │ PID   │
+├───┼────────────────────────────┼────────────────────────┼──────────┼───────┼─────────┼───────┤
+│ 1 │ https://api.example.com    │ http://localhost:8080  │ http2    │ up    │ active  │ 48213 │
+│ 2 │ https://web.example.com    │ https://localhost:5173 │ auto     │ down  │ -       │ -     │
+└───┴────────────────────────────┴────────────────────────┴──────────┴───────┴─────────┴───────┘
 
 $ cloudtunnel delete 1        # release by number
 $ cloudtunnel delete --all    # release everything
@@ -97,7 +97,8 @@ errors. Force **`http2`** (TCP) there:
 cloudtunnel up 8080 --protocol http2
 ```
 
-Values: `auto` (default) · `http2` · `quic`.
+Values: `auto` (default) · `http2` · `quic`. Works with `--detach` and `--service`
+alike, and each tunnel's transport shows in the `ls`/`ps` **PROTOCOL** column.
 
 ---
 

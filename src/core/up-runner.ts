@@ -78,7 +78,7 @@ export async function startTunnels(
         }
       },
     });
-    await patchEntry(fqdn, { pid: conn.pid, bootId: currentBootId(), logFile });
+    await patchEntry(fqdn, { pid: conn.pid, bootId: currentBootId(), logFile, protocol: opts.protocol });
     started.push({
       fqdn, subdomain: result.host.subdomain, tunnelId: result.tunnelId,
       target: serviceUrl(item.proto, item.host ?? "localhost", item.port), pid: conn.pid,

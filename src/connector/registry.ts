@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import lockfile from "proper-lockfile";
 import { ensureDirs, registryFile } from "../config/paths.js";
+import type { TransportProtocol } from "../core/transport-protocol.js";
 
 export type EntryState = "provisioning" | "running" | "stopped" | "orphaned";
 
@@ -16,6 +17,7 @@ export interface RegistryEntry {
   port: number;
   proto: "http" | "https";
   host?: string; // forward target host (absent = localhost)
+  protocol?: TransportProtocol; // cloudflared edge transport (absent = auto)
   pid?: number;
   bootId?: string;
   logFile?: string;

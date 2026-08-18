@@ -91,11 +91,13 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
   if (!opts.quiet) say.ok(`Released ${fqdn}`);
 }
 
-export interface LsRow { num: string; url: string; target: string; state: string; service: string; pid: string; managed: boolean }
+export interface LsRow { num: string; url: string; target: string; protocol: string; state: string; service: string; pid: string; managed: boolean }
 
-/** Reconcile + list tracked subdomains: `# | URL | TARGET | STATE | SERVICE | PID`.
- * SERVICE is the per-subdomain systemd unit's state ("-" when none). `all` also
- * scans every zone for cfargotunnel CNAMEs created outside cloudtunnel. */
+/** Reconcile + list tracked subdomains: `# | URL | TARGET | PROTOCOL | STATE | SERVICE | PID`.
+ * PROTOCOL is the cloudflared edge transport the connector was started with
+ * (absent = "auto", cloudflared's default). SERVICE is the per-subdomain systemd
+ * unit's state ("-" when none). `all` also scans every zone for cfargotunnel
+ * CNAMEs created outside cloudtunnel. */
 export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsRow[]> {
   const entries = await reconcile();
   const tunnels = new Map((await listTunnels(cf)).map((t) => [t.id, t]));
@@ -107,6 +109,7 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsR
       num: e.index ? String(e.index) : "-",
       url: `https://${fqdn}`,
       target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
+      protocol: e.protocol ?? "auto",
       state: !gone && e.state === "running" ? "up" : "down",
       service: svc === "none" ? "-" : svc,
       pid: e.state === "running" && e.pid ? String(e.pid) : "-",
@@ -120,7 +123,7 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsR
     for (const zone of await listZones(cf.token)) {
       for (const rec of await listCargoCnames(cf.token, zone.id)) {
         if (!tracked.has(rec.name)) {
-          rows.push({ num: "-", url: `https://${rec.name}`, target: "-", state: "unmanaged", service: "-", pid: "-", managed: false });
+          rows.push({ num: "-", url: `https://${rec.name}`, target: "-", protocol: "-", state: "unmanaged", service: "-", pid: "-", managed: false });
         }
       }
     }

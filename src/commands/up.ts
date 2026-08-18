@@ -147,8 +147,8 @@ async function registerServices(
   const rows = await listAll(cf);
   if (rows.length) {
     printTable(
-      ["#", "URL", "TARGET", "STATE", "SERVICE", "PID"],
-      rows.map((r) => [r.num, r.url, r.target, r.state, r.service, r.pid]),
+      ["#", "URL", "TARGET", "PROTOCOL", "STATE", "SERVICE", "PID"],
+      rows.map((r) => [r.num, r.url, r.target, r.protocol, r.state, r.service, r.pid]),
     );
   }
   // A service that never reports up either failed to start or resolved a
