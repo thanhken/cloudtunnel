@@ -132,7 +132,7 @@ async function rollback(cf: Cf, zoneId: string, tunnelId?: string, dnsRecordId?:
   }
   if (tunnelId) {
     try { await deleteTunnel(cf, tunnelId); }
-    catch { clean = false; say.warn(`Left tunnel ${tunnelId} behind — remove it with \`cloudtunnel down ${hostname}\`.`); }
+    catch { clean = false; say.warn(`Left tunnel ${tunnelId} behind — remove it with \`cloudtunnel delete ${tunnelId} -f\`.`); }
   }
   return clean;
 }

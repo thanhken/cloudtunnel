@@ -8,6 +8,7 @@ const paths = envPaths("cloudtunnel", { suffix: "" });
 export const configDir = paths.config;
 export const configFile = join(configDir, "config.json");
 export const registryFile = join(configDir, "tunnels.json");
+export const scanCacheFile = join(configDir, "unmanaged-scan.json");
 export const profilesFile = join(configDir, "profiles.json");
 export const binDir = join(configDir, "bin");
 export const logDir = join(configDir, "logs");

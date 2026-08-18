@@ -66,11 +66,11 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 | --- | --- |
 | `cloudtunnel login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
 | `cloudtunnel <spec…>` · `up` | Bring one or more tunnels online. `-d/--domain`, `--proto`, `--protocol`, `--detach`, `--service`, `-f/--force`, `-y/--yes`. |
-| `cloudtunnel ls` · `ps` | List tunnels — `# · URL · TARGET · PROTOCOL · STATE · SERVICE · PID`. `--all` scans the whole account. |
+| `cloudtunnel ls` · `ps` | List tunnels — `# · URL · TARGET · PROTOCOL · STATE · SERVICE · PID`. `--all` scans the whole account and numbers unmanaged tunnels too. |
 | `cloudtunnel delete <target…>` | Release tunnel(s) — stop connector + delete tunnel + DNS + any boot service. `--all`, `--dry-run`, `-f`. |
 | `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
 
-> A **`<target>`** is a `#` number, a subdomain name, a full hostname/URL, or a tunnel-id prefix — all shown in `ls`.
+> A **`<target>`** is a `#` number, a subdomain name, a full hostname/URL, or a tunnel-id prefix. Tunnels **not tracked locally** (created elsewhere, or leaked by a failed run) work too: use the `#` a `ls --all` scan gave them, or their id — and pair with `-f` when they aren't cloudtunnel-managed.
 
 ```
 $ cloudtunnel ls

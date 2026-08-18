@@ -2,13 +2,14 @@ import type { Cf } from "../cloudflare/client.js";
 import { resolveZone } from "../cloudflare/zones.js";
 import { deleteTunnelWithConnections, getTunnel, isManagedTunnel, listTunnels } from "../cloudflare/tunnels.js";
 import { deleteDnsRecord, findCname, isManagedDns } from "../cloudflare/dns.js";
-import type { Tunnel } from "../cloudflare/types.js";
+import type { DnsRecord, Tunnel } from "../cloudflare/types.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { entryFqdn, getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
 import { stopConnector } from "../connector/process.js";
 import { serviceUrl } from "./ingress.js";
 import { serviceState } from "./service.js";
+import { saveUnmanagedScan, type ScannedUnmanaged } from "./unmanaged-scan-cache.js";
 
 const tunnelIdFromCname = (content: string): string => content.replace(/\.cfargotunnel\.com\.?$/, "");
 const isNotFound = (err: unknown): boolean => err instanceof CliError && err.status === 404;
@@ -91,6 +92,49 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
   if (!opts.quiet) say.ok(`Released ${fqdn}`);
 }
 
+/** Only strings that look like a tunnel-id prefix (UUID chars, ≥6) are matched
+ * remotely — a mistyped name or `#` number must never match an account tunnel. */
+const TUNNEL_ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{5,}$/;
+
+export interface RemoteTarget { tunnel: Tunnel; fqdn?: string }
+
+/** Resolve a target the registry doesn't know as a tunnel-id prefix on the
+ * Cloudflare account (an untracked tunnel has no registry entry, so its id can
+ * only be matched remotely). The hostname is recovered from the tunnel's
+ * cfargotunnel CNAME when one exists; a DNS-less (leaked) tunnel comes back
+ * without an fqdn. Null when the target doesn't look like an id or matches
+ * no tunnel. */
+export async function resolveRemoteTarget(cf: Cf, target: string): Promise<RemoteTarget | null> {
+  if (!TUNNEL_ID_PREFIX_RE.test(target)) return null;
+  const matches = (await listTunnels(cf)).filter((t) => t.id.startsWith(target));
+  if (matches.length > 1) {
+    throw new CliError(`"${target}" matches ${matches.length} tunnels on the account.`, { hint: "use a longer id prefix" });
+  }
+  const tunnel = matches[0];
+  if (!tunnel) return null;
+  const { listCargoCnames } = await import("../cloudflare/dns.js");
+  const { listZones } = await import("../cloudflare/zones.js");
+  for (const zone of await listZones(cf.token)) {
+    const rec = (await listCargoCnames(cf.token, zone.id)).find((r) => tunnelIdFromCname(r.content) === tunnel.id);
+    if (rec) return { tunnel, fqdn: rec.name };
+  }
+  return { tunnel };
+}
+
+/** Release a tunnel that has no DNS record (an id-only target): same ownership
+ * gate as the fqdn path, honors --dry-run. */
+export async function removeTunnelById(cf: Cf, tunnel: Tunnel, opts: RemoveOptions = {}): Promise<void> {
+  if (!isManagedTunnel(tunnel) && !opts.force) {
+    throw new CliError(`Tunnel ${tunnel.id} is not managed by cloudtunnel.`, { hint: "pass --force to release it" });
+  }
+  if (opts.dryRun) {
+    say.info(`Would release: tunnel ${tunnel.id} (no DNS record)`);
+    return;
+  }
+  await deleteTunnelWithConnections(cf, tunnel.id);
+  if (!opts.quiet) say.ok(`Released tunnel ${tunnel.id}`);
+}
+
 export interface LsRow { num: string; url: string; target: string; protocol: string; state: string; service: string; pid: string; managed: boolean }
 
 /** Reconcile + list tracked subdomains: `# | URL | TARGET | PROTOCOL | STATE | SERVICE | PID`.
@@ -120,13 +164,24 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsR
     const { listCargoCnames } = await import("../cloudflare/dns.js");
     const { listZones } = await import("../cloudflare/zones.js");
     const tracked = new Set(entries.map(entryFqdn));
+    const unmanaged: DnsRecord[] = [];
     for (const zone of await listZones(cf.token)) {
       for (const rec of await listCargoCnames(cf.token, zone.id)) {
-        if (!tracked.has(rec.name)) {
-          rows.push({ num: "-", url: `https://${rec.name}`, target: "-", protocol: "-", state: "unmanaged", service: "-", pid: "-", managed: false });
-        }
+        if (!tracked.has(rec.name)) unmanaged.push(rec);
       }
     }
+    // Unmanaged rows get a `#` too (continuing after the tracked ones, sorted
+    // for a stable display) so `delete <#>` works on them. The numbering is
+    // pinned to this scan — see unmanaged-scan-cache.
+    unmanaged.sort((a, b) => a.name.localeCompare(b.name));
+    let next = Math.max(0, ...entries.map((e) => e.index ?? 0)) + 1;
+    const scan = new Map<number, ScannedUnmanaged>();
+    for (const rec of unmanaged) {
+      scan.set(next, { fqdn: rec.name, tunnelId: tunnelIdFromCname(rec.content) });
+      rows.push({ num: String(next), url: `https://${rec.name}`, target: "-", protocol: "-", state: "unmanaged", service: "-", pid: "-", managed: false });
+      next++;
+    }
+    saveUnmanagedScan(scan);
   }
   return rows;
 }

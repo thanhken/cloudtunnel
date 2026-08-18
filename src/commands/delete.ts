@@ -4,7 +4,8 @@ import { say } from "../ui/output.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { entryFqdn, listEntries } from "../connector/registry.js";
-import { removeTunnelSubdomain, resolveTarget } from "../core/orchestrator-manage.js";
+import { removeTunnelById, removeTunnelSubdomain, resolveRemoteTarget, resolveTarget } from "../core/orchestrator-manage.js";
+import { lookupUnmanagedByIndex } from "../core/unmanaged-scan-cache.js";
 import { serviceName, serviceState, uninstallService } from "../core/service.js";
 
 interface DeleteOptions { all?: boolean; force?: boolean; dryRun?: boolean }
@@ -23,7 +24,7 @@ async function deleteOne(cf: Cf, fqdn: string, opts: DeleteOptions): Promise<voi
 export function registerDelete(program: Command): void {
   program
     .command("delete")
-    .argument("[targets...]", "subdomains to remove by # / name / URL (omit with --all)")
+    .argument("[targets...]", "subdomains to remove by # / name / URL / tunnel-id (omit with --all)")
     .description("Release tunnel(s) — deletes the tunnel + DNS, and any systemd boot service")
     .option("--all", "release every tracked subdomain")
     .option("-f, --force", "release even a resource not created by cloudtunnel")
@@ -49,9 +50,30 @@ export function registerDelete(program: Command): void {
         return;
       }
 
-      if (targets.length === 0) throw new CliError("Pass a subdomain (# / name / URL) or --all.");
+      if (targets.length === 0) throw new CliError("Pass a subdomain (# / name / URL / tunnel-id) or --all.");
       for (const target of targets) {
-        const { fqdn } = resolveTarget(target);
+        let fqdn: string;
+        try {
+          ({ fqdn } = resolveTarget(target));
+        } catch (err) {
+          // Unknown to the local registry — the target may be the `#` an
+          // unmanaged tunnel was shown with in the last `ls --all`, or the id
+          // of an untracked tunnel (created elsewhere, or leaked by a failed
+          // run); try both against what's pinned/on the account before giving up.
+          const scanned = /^\d+$/.test(target) ? lookupUnmanagedByIndex(Number(target)) : undefined;
+          if (scanned) {
+            say.info(`${target} → ${scanned.fqdn} (unmanaged, numbered by the last \`ls --all\`)`);
+            fqdn = scanned.fqdn;
+          } else {
+            const remote = await resolveRemoteTarget(cf, target);
+            if (!remote) throw err;
+            if (!remote.fqdn) {
+              await removeTunnelById(cf, remote.tunnel, opts);
+              continue;
+            }
+            fqdn = remote.fqdn;
+          }
+        }
         await deleteOne(cf, fqdn, opts);
       }
     });
