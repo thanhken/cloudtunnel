@@ -48,7 +48,8 @@
     "commander": "^12.1.0",
     "env-paths": "^3.0.0",
     "picocolors": "^1.1.1",
-    "proper-lockfile": "^4.1.2"
+    "proper-lockfile": "^4.1.2",
+    "undici": "^6.28.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

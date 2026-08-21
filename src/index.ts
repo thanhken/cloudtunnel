@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import pc from "picocolors";
 import { reportError } from "./ui/errors.js";
 import { migrateLegacyProfiles } from "./config/legacy-migrate.js";
+import { configureProxy } from "./config/proxy.js";
 
 import { registerLogin } from "./commands/login.js";
 import { registerUp } from "./commands/up.js";
@@ -50,6 +51,9 @@ function shouldMigrate(argv: string[]): boolean {
 }
 
 async function main(): Promise<void> {
+  // Route fetch through a proxy if one is configured (Node's fetch ignores
+  // proxies by default → UND_ERR_CONNECT_TIMEOUT behind a corporate proxy).
+  configureProxy();
   // One-time, best-effort upgrade from the old profile model.
   if (shouldMigrate(process.argv)) await migrateLegacyProfiles();
   const program = buildProgram();

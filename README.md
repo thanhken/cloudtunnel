@@ -185,6 +185,16 @@ curl https://cfapi.you.com/client/v4/accounts \
 The relay validates `X-CT-Relay-Secret`, strips it, and forwards everything else to
 `https://api.cloudflare.com/client/v4/accounts`. Missing/wrong header → `403`.
 
+**Behind a proxy?** Node's `fetch` ignores proxies by default, so on a proxied
+network the client fails with `UND_ERR_CONNECT_TIMEOUT` even though curl/Postman
+work. cloudtunnel now routes through a proxy automatically from `HTTPS_PROXY`/
+`HTTP_PROXY` (and, on Linux/GNOME, the system proxy). Set it once if needed:
+
+```bash
+export HTTPS_PROXY=http://your-proxy:port
+CLOUDTUNNEL_DEBUG=1 cloudtunnel ls   # logs "[proxy] routing fetch through …"
+```
+
 ---
 
 ## 🔁 Run on boot (`--service`)
