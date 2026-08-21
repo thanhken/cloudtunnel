@@ -7,6 +7,7 @@ import { loadConfig, saveConfig, type CloudtunnelConfig } from "../config/store.
 import { REQUIRED_SCOPES, openBrowser, tokenCreateUrl } from "../config/token-url.js";
 import { listAccounts, listZones } from "../config/resolve-identity.js";
 import { getApiBase, isHttpUrl } from "../config/api-base.js";
+import { decodeRelayKey } from "../config/relay-key.js";
 
 interface LoginOptions {
   tokenStdin?: boolean;
@@ -16,6 +17,7 @@ interface LoginOptions {
   status?: boolean;
   apiBase?: string; // point the CF API at a relay (blocked control plane)
   relaySecretStdin?: boolean; // read the relay shared secret from stdin
+  relay?: string; // one-shot relay key (base+secret) from `cloudtunnel relay`
 }
 
 /** Read the whole stdin pipe (for `--token-stdin`). */
@@ -55,6 +57,14 @@ async function acquireToken(opts: LoginOptions): Promise<{ token: string; fromEn
 }
 
 async function runLoginFlow(opts: LoginOptions = {}): Promise<void> {
+  let relaySecretInput: string | undefined;
+  // A relay key bundles base+secret into one flag → the simplest client setup
+  // (`login --relay <key>`); no env exports, no double stdin.
+  if (opts.relay) {
+    const decoded = decodeRelayKey(opts.relay);
+    opts.apiBase = decoded.base;
+    relaySecretInput = decoded.secret;
+  }
   if (opts.apiBase && !isHttpUrl(opts.apiBase)) {
     throw new CliError(`Invalid --api-base "${opts.apiBase}".`, {
       hint: "must be an http(s) URL, e.g. https://cfapi.example.com/client/v4",
@@ -69,8 +79,9 @@ async function runLoginFlow(opts: LoginOptions = {}): Promise<void> {
   // client the login-time listAccounts/listZones must also ride the relay, and
   // config isn't saved yet — so seed the env the transport reads from.
   if (opts.apiBase) process.env.CLOUDTUNNEL_API_BASE = opts.apiBase;
-  let relaySecretInput: string | undefined;
-  if (opts.relaySecretStdin) {
+  if (relaySecretInput) {
+    process.env.CLOUDTUNNEL_RELAY_SECRET = relaySecretInput;
+  } else if (opts.relaySecretStdin) {
     relaySecretInput = await readStdin();
     if (relaySecretInput) process.env.CLOUDTUNNEL_RELAY_SECRET = relaySecretInput;
   }
@@ -158,6 +169,7 @@ export function registerLogin(program: Command): void {
     .option("--token <token>", "[discouraged] token as an argument (leaks into shell history)")
     .option("--account <id>", "Cloudflare account id (auto-resolved when you have one account)")
     .option("--zone <domain>", "default domain for new tunnels (auto-resolved when you have one)")
+    .option("--relay <key>", "one-shot relay setup: paste the key printed by `cloudtunnel relay` (sets base + secret)")
     .option("--api-base <url>", "route the CF API through a relay (when api.cloudflare.com is blocked)")
     .option("--relay-secret-stdin", "read the relay shared secret from stdin (pairs with --api-base)")
     .option("--status", "show current identity (redacted) and exit")

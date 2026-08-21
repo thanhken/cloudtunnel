@@ -128,19 +128,19 @@ cloudtunnel relay cfapi -d you.com --detach   # background
 cloudtunnel relay cfapi -d you.com --service  # run on boot
 ```
 
-**On the blocked client** — set the base + secret, then use cloudtunnel normally:
+**On the blocked client** — one command. `cloudtunnel relay` prints a **relay key**
+(base + secret in one blob); paste it into `login` and everything is saved to config
+(`0600`) for good — no env vars to export, ever:
 
 ```bash
-export CLOUDTUNNEL_API_BASE=https://cfapi.you.com/client/v4
-export CLOUDTUNNEL_RELAY_SECRET=<secret-from-the-relay>
-printf %s "$CF_TOKEN" | cloudtunnel login --token-stdin   # mint the token on an unblocked host
-cloudtunnel up web:8080 -d you.com                        # now manages tunnels through the relay
+cloudtunnel login --relay ctr_XXXXXXXX…      # mint/paste the CF token when asked
+cloudtunnel ls                                # from now on: nothing to set
+cloudtunnel up web:8080 -d you.com            # manages tunnels through the relay
 ```
 
-Or persist it instead of env vars:
-`cloudtunnel login --api-base https://cfapi.you.com/client/v4 --relay-secret-stdin`
-(pipe the secret on stdin). `cloudtunnel login --status` shows the active **Base** and
-whether a **Relay secret** is set (never the value).
+(Prefer env/flags? `CLOUDTUNNEL_API_BASE` + `CLOUDTUNNEL_RELAY_SECRET`, or
+`login --api-base <url> --relay-secret-stdin`, work too.) `cloudtunnel login --status`
+shows the active **Base** and whether a **Relay secret** is set (never the value).
 
 The proxy forwards to **`api.cloudflare.com` only** (no open-proxy / SSRF) and
 returns `403` to any request missing the shared secret.

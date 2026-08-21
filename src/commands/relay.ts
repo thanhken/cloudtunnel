@@ -10,6 +10,7 @@ import { resolveCf } from "../cloudflare/client.js";
 import { ensureCloudflared } from "../connector/binary.js";
 import { logDir, ensureDirs } from "../config/paths.js";
 import { ensureRelaySecret } from "../config/relay-secret.js";
+import { encodeRelayKey } from "../config/relay-key.js";
 import { startProxy } from "../core/api-proxy-server.js";
 import { resolveDomain } from "../core/resolve-domain.js";
 import { startTunnels } from "../core/up-runner.js";
@@ -60,15 +61,14 @@ export function relayReadyLines(fqdn: string, secret: string, tty: boolean): str
   const url = `https://${fqdn}`;
   if (!tty) return [`relay ready at ${url}`];
   const base = `${url}/client/v4`;
+  const key = encodeRelayKey(base, secret);
   return [
     `URL     ${pc.green(url)}`,
-    `Secret  ${pc.bold(secret)}  ${pc.dim("(store it — the client needs it, shown once)")}`,
+    `Secret  ${pc.bold(secret)}  ${pc.dim("(shown once)")}`,
     "",
-    pc.bold("On the blocked client:"),
-    `  export CLOUDTUNNEL_API_BASE=${base}`,
-    `  export CLOUDTUNNEL_RELAY_SECRET=${secret}`,
-    `  printf %s "$CF_TOKEN" | cloudtunnel login --token-stdin`,
-    pc.dim("  (mint the CF token on an unblocked host — dash.cloudflare.com is blocked too)"),
+    pc.bold("On the blocked client — one command, no env, saved for good:"),
+    `  cloudtunnel login --relay ${key}`,
+    pc.dim("  → then just `cloudtunnel ls` / `up …`. Mint the CF token on an unblocked host (dash.cloudflare.com is blocked too)."),
   ];
 }
 

@@ -22,9 +22,9 @@ describe("relayReadyLines — secret only on a TTY", () => {
     expect(out).toContain("cfapi.abc.com");
   });
 
-  it("shows the secret + client hint on an interactive TTY", () => {
+  it("shows the secret + one-command relay key on an interactive TTY", () => {
     const out = relayReadyLines("cfapi.abc.com", SECRET, true).join("\n");
     expect(out).toContain(SECRET);
-    expect(out).toContain("CLOUDTUNNEL_API_BASE");
+    expect(out).toContain("login --relay ctr_");
   });
 });
