@@ -1,14 +1,13 @@
 import type { Command } from "commander";
 import * as clack from "@clack/prompts";
 import { CliError } from "../ui/errors.js";
-import { say, selectOne, printTable } from "../ui/output.js";
+import { say, printTable } from "../ui/output.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
-import { listZones } from "../cloudflare/zones.js";
-import type { Credentials } from "../config/store.js";
 import { ensureCloudflared } from "../connector/binary.js";
 import type { CreateOptions } from "../core/orchestrator-create.js";
 import { startTunnels } from "../core/up-runner.js";
+import { resolveDomain } from "../core/resolve-domain.js";
 import { listAll } from "../core/orchestrator-manage.js";
 import { getEntry } from "../connector/registry.js";
 import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
@@ -48,18 +47,6 @@ async function promptPort(): Promise<number> {
     }),
   );
   return Number(input);
-}
-
-/** The domain for the whole batch: `-d` → single zone → picker (TTY) → saved
- * default (non-TTY) → error. */
-async function resolveDomain(cf: Cf, opts: UpOptions, creds: Credentials): Promise<string> {
-  if (opts.domain) return opts.domain;
-  const zones = await listZones(cf.token);
-  if (zones.length === 0) throw new CliError("No domains found in this Cloudflare account.");
-  if (zones.length === 1) return zones[0]!.name;
-  if (process.stdin.isTTY) return (await selectOne("Choose a domain", zones, (z) => z.name)).name;
-  if (creds.defaultZone) return creds.defaultZone;
-  throw new CliError("Multiple domains in this account — pick one.", { hint: "pass -d <domain>" });
 }
 
 /** The subdomain for a spec: explicit in the spec → used as-is; otherwise prompt

@@ -1,7 +1,7 @@
 import { CliError } from "../ui/errors.js";
 import { REQUIRED_SCOPES, tokenCreateUrl } from "./token-url.js";
-
-const API_BASE = "https://api.cloudflare.com/client/v4";
+import { getApiBase, DEFAULT_API_BASE } from "./api-base.js";
+import { RELAY_SECRET_HEADER, getRelaySecret } from "./relay-secret.js";
 
 export interface CfAccount { id: string; name: string }
 export interface CfZone { id: string; name: string; account?: { id: string } }
@@ -12,11 +12,16 @@ export interface CfZone { id: string; name: string; account?: { id: string } }
  * thrown message. A 403 is mapped to a missing-scope hint.
  */
 async function cfGet<T>(path: string, token: string): Promise<T[]> {
+  const base = getApiBase();
+  const secret = getRelaySecret();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  if (secret && base !== DEFAULT_API_BASE) headers[RELAY_SECRET_HEADER] = secret;
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, {
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    });
+    res = await fetch(`${base}${path}`, { headers });
   } catch {
     throw new CliError("Could not reach the Cloudflare API (network error).");
   }

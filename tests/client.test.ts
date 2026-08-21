@@ -373,3 +373,50 @@ describe("cfPaginate", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("cfRequest — relay transport", () => {
+  const BASE = "CLOUDTUNNEL_API_BASE";
+  const SECRET = "CLOUDTUNNEL_RELAY_SECRET";
+  afterEach(() => {
+    delete process.env[BASE];
+    delete process.env[SECRET];
+    vi.clearAllMocks();
+  });
+
+  const ok = () =>
+    vi.fn().mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, result: {} }) });
+
+  it("uses the configured base URL and sends the relay secret header when set", async () => {
+    process.env[BASE] = "https://cfapi.abc.com/client/v4";
+    process.env[SECRET] = "sek";
+    const mockFetch = ok();
+    vi.stubGlobal("fetch", mockFetch);
+
+    await cfRequest("tok", "GET", "/accounts/x/cfd_tunnel");
+    const [url, init] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("https://cfapi.abc.com/client/v4/accounts/x/cfd_tunnel");
+    expect(init.headers["X-CT-Relay-Secret"]).toBe("sek");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("omits the relay secret header when none is set", async () => {
+    const mockFetch = ok();
+    vi.stubGlobal("fetch", mockFetch);
+
+    await cfRequest("tok", "GET", "/accounts");
+    const [, init] = mockFetch.mock.calls[0]!;
+    expect(init.headers["X-CT-Relay-Secret"]).toBeUndefined();
+  });
+
+  it("does NOT send the secret to the default base (never leak it to Cloudflare)", async () => {
+    // Secret set but base is the direct api.cloudflare.com default → header omitted.
+    process.env[SECRET] = "sek";
+    const mockFetch = ok();
+    vi.stubGlobal("fetch", mockFetch);
+
+    await cfRequest("tok", "GET", "/accounts");
+    const [url, init] = mockFetch.mock.calls[0]!;
+    expect(url).toContain("api.cloudflare.com");
+    expect(init.headers["X-CT-Relay-Secret"]).toBeUndefined();
+  });
+});

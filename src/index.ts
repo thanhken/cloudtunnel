@@ -9,6 +9,7 @@ import { registerUp } from "./commands/up.js";
 import { registerLs } from "./commands/ls.js";
 import { registerDelete } from "./commands/delete.js";
 import { registerLogs } from "./commands/logs.js";
+import { registerRelay } from "./commands/relay.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
@@ -33,7 +34,7 @@ function buildProgram(): Command {
     ].join("\n"),
   );
 
-  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs]) {
+  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerRelay]) {
     register(program);
   }
   return program;

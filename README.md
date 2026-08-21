@@ -69,6 +69,7 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 | `cloudtunnel ls` · `ps` | List tunnels — `# · URL · TARGET · PROTOCOL · STATE · SERVICE · PID`. `--all` scans the whole account and numbers unmanaged tunnels too. |
 | `cloudtunnel delete <target…>` | Release tunnel(s) — stop connector + delete tunnel + DNS + any boot service. `--all`, `--dry-run`, `-f`. |
 | `cloudtunnel logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
+| `cloudtunnel relay [sub]` | Expose a locked Cloudflare-API reverse proxy via a tunnel — lets a client behind a CF-API block manage tunnels through this host. `-d`, `--detach`, `--service`. |
 
 > A **`<target>`** is a `#` number, a subdomain name, a full hostname/URL, or a tunnel-id prefix. Tunnels **not tracked locally** (created elsewhere, or leaked by a failed run) work too: use the `#` a `ls --all` scan gave them, or their id — and pair with `-f` when they aren't cloudtunnel-managed.
 
@@ -99,6 +100,64 @@ cloudtunnel up 8080 --protocol http2
 
 Values: `auto` (default) · `http2` · `quic`. Works with `--detach` and `--service`
 alike, and each tunnel's transport shows in the `ls`/`ps` **PROTOCOL** column.
+
+---
+
+## 🛰️ Blocked Cloudflare API? Relay it (`relay`)
+
+Some networks block **`api.cloudflare.com`** (the management API cloudtunnel calls
+to create tunnels + DNS) while leaving the **data plane** (`*.your-domain.com` via
+the Cloudflare edge) reachable. Run a **relay** on a host that _can_ reach the API,
+then point the blocked client's API base at it — every `login`/`up`/`ls`/`delete`
+rides the data-plane tunnel instead of hitting the API directly.
+
+```
+CLIENT (api.cloudflare.com blocked)            RELAY (api.cloudflare.com OK)
+  CLOUDTUNNEL_API_BASE=https://cfapi.you.com/client/v4
+        │  data-plane tunnel — NOT blocked
+        ▼
+  cfapi.you.com ─(CF edge)─►  relay reverse-proxy ─►  https://api.cloudflare.com
+```
+
+**On the relay host** — one command starts a locked, secret-gated reverse proxy on
+loopback and exposes it through a normal tunnel:
+
+```bash
+cloudtunnel relay cfapi -d you.com            # → https://cfapi.you.com  + prints a shared secret
+cloudtunnel relay cfapi -d you.com --detach   # background
+cloudtunnel relay cfapi -d you.com --service  # run on boot
+```
+
+**On the blocked client** — set the base + secret, then use cloudtunnel normally:
+
+```bash
+export CLOUDTUNNEL_API_BASE=https://cfapi.you.com/client/v4
+export CLOUDTUNNEL_RELAY_SECRET=<secret-from-the-relay>
+printf %s "$CF_TOKEN" | cloudtunnel login --token-stdin   # mint the token on an unblocked host
+cloudtunnel up web:8080 -d you.com                        # now manages tunnels through the relay
+```
+
+Or persist it instead of env vars:
+`cloudtunnel login --api-base https://cfapi.you.com/client/v4 --relay-secret-stdin`
+(pipe the secret on stdin). `cloudtunnel login --status` shows the active **Base** and
+whether a **Relay secret** is set (never the value).
+
+The proxy forwards to **`api.cloudflare.com` only** (no open-proxy / SSRF) and
+returns `403` to any request missing the shared secret.
+
+> 🔒 **Trust model.** The relay sees the client's Cloudflare **token in plaintext**
+> (it terminates the tunnel) — only relay through a host **you control**, and use a
+> least-privilege token (the four scopes under [Authentication](#-authentication)).
+> The token-mint page (`dash.cloudflare.com`) is usually blocked on the client too —
+> create the token on the relay/any unblocked host and paste it via `--token-stdin`.
+
+**Precedence** — API base: `CLOUDTUNNEL_API_BASE` env → `config.apiBase` → default
+`api.cloudflare.com`. Relay secret: `CLOUDTUNNEL_RELAY_SECRET` env → `config.relaySecret`.
+
+> ℹ️ The secret is printed only to an interactive terminal (never to a logfile or
+> journald). A **non-interactive** `relay --detach`/`--service` first run won't show
+> the auto-generated secret — set `CLOUDTUNNEL_RELAY_SECRET` yourself in scripts, or
+> read it back from `config.json`.
 
 ---
 

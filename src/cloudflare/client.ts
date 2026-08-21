@@ -1,7 +1,8 @@
 import { CliError } from "../ui/errors.js";
 import { getCredentials } from "../config/store.js";
+import { getApiBase, DEFAULT_API_BASE } from "../config/api-base.js";
+import { RELAY_SECRET_HEADER, getRelaySecret } from "../config/relay-secret.js";
 
-const API_BASE = "https://api.cloudflare.com/client/v4";
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 4;
 
@@ -42,12 +43,22 @@ export async function cfRequest<T>(
   path: string,
   body?: unknown,
 ): Promise<CfEnvelope<T>> {
+  // Base + relay secret resolved once per call (env → config → default). The
+  // secret header rides only when the base is actually a relay (non-default), so
+  // it's never sent to api.cloudflare.com; unset base ⇒ identical to today.
+  const base = getApiBase();
+  const secret = getRelaySecret();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  if (secret && base !== DEFAULT_API_BASE) headers[RELAY_SECRET_HEADER] = secret;
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}${path}`, {
+      res = await fetch(`${base}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch {

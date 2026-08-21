@@ -16,6 +16,9 @@ export interface ServiceSpecParams {
   zone: string;
   proto: "http" | "https";
   protocol?: TransportProtocol;
+  /** Which foreground command the boot unit re-runs. Default "up"; "relay" makes
+   * the unit start the CF-API relay instead of a plain tunnel. */
+  command?: "up" | "relay";
 }
 
 /** Normalized, OS-agnostic description of the boot service for one subdomain. */
@@ -37,8 +40,17 @@ export const fqdnFor = (subdomain: string, zone: string): string =>
 export const serviceSlug = (fqdn: string): string => fqdn.replace(/[^a-zA-Z0-9]+/g, "-");
 
 /** The cloudtunnel args a boot service re-runs: recreate this one subdomain in the
- * foreground, non-interactively. Round-trips through `parseTunnelSpec` on boot. */
+ * foreground, non-interactively. Round-trips through `parseTunnelSpec` on boot.
+ * A relay unit re-runs `relay <sub>` instead (it picks a fresh proxy port itself
+ * and reads the persisted secret from config — nothing sensitive in the unit). */
 export function buildUpArgs(p: ServiceSpecParams): string[] {
+  if (p.command === "relay") {
+    return [
+      "relay", p.subdomain, "-d", p.zone,
+      ...(p.proto === "https" ? ["--proto", "https"] : []),
+      "-f", "-y",
+    ];
+  }
   const spec = formatTunnelSpec({ subdomain: p.subdomain, port: p.port, host: p.host });
   return [
     "up", spec, "-d", p.zone,

@@ -6,6 +6,11 @@ export interface CloudtunnelConfig {
   apiToken?: string;
   accountId?: string;
   defaultZone?: string;
+  /** Override the Cloudflare API base — point at a relay when the direct control
+   * plane is blocked. See `config/api-base.ts`. */
+  apiBase?: string;
+  /** Shared secret required by / sent to the relay proxy. See `config/relay-secret.ts`. */
+  relaySecret?: string;
 }
 
 export interface Credentials {

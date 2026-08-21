@@ -28,6 +28,14 @@ describe("service-exec", () => {
     expect(fqdnFor("@", "abc.com")).toBe("abc.com");
     expect(fqdnFor("api", "abc.com")).toBe("api.abc.com");
   });
+
+  it("builds relay args (relay <sub> …) when command is relay, not up", () => {
+    expect(buildUpArgs({ command: "relay", subdomain: "cfapi", port: 0, zone: "abc.com", proto: "http" }))
+      .toEqual(["relay", "cfapi", "-d", "abc.com", "-f", "-y"]);
+    // relay unit carries no port/protocol; --proto only when https
+    expect(buildUpArgs({ command: "relay", subdomain: "cfapi", port: 0, zone: "abc.com", proto: "https" }))
+      .toEqual(["relay", "cfapi", "-d", "abc.com", "--proto", "https", "-f", "-y"]);
+  });
 });
 
 describe("systemd backend", () => {
