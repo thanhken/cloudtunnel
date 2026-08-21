@@ -159,6 +159,32 @@ returns `403` to any request missing the shared secret.
 > the auto-generated secret — set `CLOUDTUNNEL_RELAY_SECRET` yourself in scripts, or
 > read it back from `config.json`.
 
+**Debug / confirm traffic actually goes through the relay:**
+
+```bash
+# CLIENT: trace every CF API call (method · URL · status · relay|direct) to stderr
+CLOUDTUNNEL_DEBUG=1 cloudtunnel ls
+#   [cf] GET https://cfapi.you.com/client/v4/accounts?... -> 200 (relay)
+```
+
+The **relay** process logs each request it forwards (method · path · status only —
+never headers): `[relay] 200 GET /client/v4/accounts`. A rejected call is tagged
+with the reason (`secret`, `ssrf`, `bad-form`, `upstream-error`). A relay rejection
+now surfaces as `Relay rejected the request (403): …` on the client instead of a
+misleading "token" error.
+
+**Calling the relay directly** (curl / your own client) — send the CF token as usual
+plus the relay secret header:
+
+```bash
+curl https://cfapi.you.com/client/v4/accounts \
+  -H "Authorization: Bearer $CF_TOKEN" \
+  -H "X-CT-Relay-Secret: <secret>"
+```
+
+The relay validates `X-CT-Relay-Secret`, strips it, and forwards everything else to
+`https://api.cloudflare.com/client/v4/accounts`. Missing/wrong header → `403`.
+
 ---
 
 ## 🔁 Run on boot (`--service`)

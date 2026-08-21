@@ -1,4 +1,5 @@
-import { CliError } from "../ui/errors.js";
+import { CliError, fetchErrorReason } from "../ui/errors.js";
+import { say } from "../ui/output.js";
 import { getCredentials } from "../config/store.js";
 import { getApiBase, DEFAULT_API_BASE } from "../config/api-base.js";
 import { RELAY_SECRET_HEADER, getRelaySecret } from "../config/relay-secret.js";
@@ -47,12 +48,13 @@ export async function cfRequest<T>(
   // secret header rides only when the base is actually a relay (non-default), so
   // it's never sent to api.cloudflare.com; unset base ⇒ identical to today.
   const base = getApiBase();
+  const viaRelay = base !== DEFAULT_API_BASE;
   const secret = getRelaySecret();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
-  if (secret && base !== DEFAULT_API_BASE) headers[RELAY_SECRET_HEADER] = secret;
+  if (secret && viaRelay) headers[RELAY_SECRET_HEADER] = secret;
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
@@ -61,16 +63,29 @@ export async function cfRequest<T>(
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-    } catch {
-      throw new CliError("Could not reach the Cloudflare API (network error).");
+    } catch (err) {
+      const reason = fetchErrorReason(err);
+      say.debug(`[cf] ${method} ${base}${path} -> network error: ${reason}${viaRelay ? " (relay)" : ""}`);
+      throw new CliError(`Could not reach the Cloudflare API (${reason})${viaRelay ? ` via relay ${base}` : ""}.`, {
+        hint: viaRelay ? "is the relay tunnel up and the base URL correct? run with CLOUDTUNNEL_DEBUG=1" : undefined,
+      });
     }
+    say.debug(`[cf] ${method} ${base}${path} -> ${res.status}${viaRelay ? " (relay)" : ""}`);
     if (RETRYABLE.has(res.status) && attempt < MAX_ATTEMPTS) {
       const retryAfter = Number(res.headers.get("retry-after")) || 0;
       await sleep(retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 500);
       continue;
     }
-    const env = (await res.json().catch(() => ({}))) as CfEnvelope<T>;
+    const env = (await res.json().catch(() => ({}))) as CfEnvelope<T> & { error?: string };
     if (!res.ok || !env.success) {
+      // A relay rejects with its own `{error}` shape (not CF's `{errors}`) — surface
+      // it so a relay/secret failure isn't misread as a Cloudflare API error.
+      if (viaRelay && env.error && !env.errors) {
+        throw new CliError(`Relay rejected the request (${res.status}): ${env.error}.`, {
+          status: res.status,
+          hint: res.status === 403 ? "does CLOUDTUNNEL_RELAY_SECRET match the relay's secret?" : `relay base: ${base}`,
+        });
+      }
       const msg = env.errors?.[0]?.message ?? `HTTP ${res.status}`;
       throw new CliError(`Cloudflare API error: ${msg}`, { status: res.status });
     }

@@ -110,7 +110,7 @@ async function runRelay(sub: string, opts: RelayOptions): Promise<void> {
   // loopback, so the tunnel ingress is always http.
   const bin = await ensureCloudflared();
   const secret = ensureRelaySecret();
-  const proxy = await startProxy({ secret });
+  const proxy = await startProxy({ secret, log: (line) => say.dim(line) });
   const item: CreateOptions = {
     port: proxy.port, proto: "http", name: sub, zone: domain,
     defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,

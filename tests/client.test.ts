@@ -419,4 +419,14 @@ describe("cfRequest — relay transport", () => {
     expect(url).toContain("api.cloudflare.com");
     expect(init.headers["X-CT-Relay-Secret"]).toBeUndefined();
   });
+
+  it("surfaces a relay rejection instead of a generic Cloudflare error", async () => {
+    process.env[BASE] = "https://cfapi.abc.com/client/v4";
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: false, status: 403, json: async () => ({ error: "relay secret missing or invalid" }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(cfRequest("tok", "GET", "/accounts")).rejects.toThrow(/Relay rejected the request \(403\)/);
+  });
 });

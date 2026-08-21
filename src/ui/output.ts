@@ -26,6 +26,11 @@ export const say = {
   warn: (msg: string) => console.warn(pc.yellow(`! ${msg}`)),
   dim: (msg: string) => console.log(pc.dim(msg)),
   step: (msg: string) => console.log(pc.cyan(`→ ${msg}`)),
+  // Opt-in request/diagnostic trace. Gated by CLOUDTUNNEL_DEBUG and written to
+  // STDERR so it never mixes into command stdout. Never pass a secret/token here.
+  debug: (msg: string) => {
+    if (process.env.CLOUDTUNNEL_DEBUG) console.error(pc.dim(msg));
+  },
 };
 
 export const dim = (s: string): string => pc.dim(s);

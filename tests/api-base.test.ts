@@ -37,6 +37,11 @@ describe("getApiBase", () => {
     // sanity: composing with a `/`-prefixed path yields a single slash
     expect(`${getApiBase()}/accounts`).toBe("https://cfapi.abc.com/client/v4/accounts");
   });
+
+  it("throws a clear error on a scheme-less base (instead of a later network error)", () => {
+    process.env[ENV] = "cfapi.abc.com/client/v4"; // missing https://
+    expect(() => getApiBase()).toThrow(/Invalid Cloudflare API base/);
+  });
 });
 
 describe("isHttpUrl", () => {

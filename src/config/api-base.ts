@@ -1,3 +1,4 @@
+import { CliError } from "../ui/errors.js";
 import { loadConfig } from "./store.js";
 
 /** Default Cloudflare management API base — no trailing slash (callers append a
@@ -16,8 +17,15 @@ export const DEFAULT_API_BASE = "https://api.cloudflare.com/client/v4";
 export function getApiBase(): string {
   // `||` (not `??`) so an empty/whitespace env or config value falls through
   // instead of yielding a broken "" base.
-  const raw = process.env.CLOUDTUNNEL_API_BASE?.trim() || loadConfig().apiBase || DEFAULT_API_BASE;
-  return raw.replace(/\/+$/, "");
+  const raw = (process.env.CLOUDTUNNEL_API_BASE?.trim() || loadConfig().apiBase || DEFAULT_API_BASE).replace(/\/+$/, "");
+  // Fail fast on a malformed base (e.g. a scheme-less host set via env) with a
+  // clear message instead of a cryptic `fetch` "network error" later.
+  if (!isHttpUrl(raw)) {
+    throw new CliError(`Invalid Cloudflare API base "${raw}".`, {
+      hint: "CLOUDTUNNEL_API_BASE must be a full http(s) URL, e.g. https://cfapi.example.com/client/v4",
+    });
+  }
+  return raw;
 }
 
 /** True if `s` parses as an http(s) URL — validates `login --api-base`. */

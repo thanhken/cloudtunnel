@@ -21,6 +21,18 @@ export class CliError extends Error {
   }
 }
 
+/**
+ * Best-effort concise reason from a thrown `fetch`/undici error. Node's fetch
+ * throws a generic `TypeError: fetch failed` and buries the real cause (DNS,
+ * refused, TLS, timeout, bad URL) in `.cause` — surface it so "network error"
+ * becomes actionable (e.g. `ENOTFOUND`, `ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`,
+ * `self-signed certificate`, `Invalid URL`).
+ */
+export function fetchErrorReason(err: unknown): string {
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+  return cause?.code ?? cause?.message ?? (err as Error)?.message ?? "unknown";
+}
+
 /** Print an error and return the exit code. Known CliErrors print cleanly; the
  * rest print their message plus a note that it was unexpected. */
 export function reportError(err: unknown): number {

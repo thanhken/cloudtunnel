@@ -161,3 +161,19 @@ describe("startProxy — forwarding", () => {
     expect(res.body).not.toContain("supersecret");
   });
 });
+
+describe("startProxy — access log (never leaks headers)", () => {
+  it("logs method + path + status, and the secret-reject reason — but no header value", async () => {
+    vi.stubGlobal("fetch", okFetch());
+    const lines: string[] = [];
+    handle = await startProxy({ secret: SECRET, log: (l) => lines.push(l) });
+
+    await request(handle.port, { path: "/client/v4/accounts", headers: { "X-CT-Relay-Secret": SECRET, Authorization: "Bearer tok" } });
+    await request(handle.port, { path: "/client/v4/zones" }); // missing secret → 403
+
+    expect(lines).toContainEqual("[relay] 200 GET /client/v4/accounts");
+    expect(lines).toContainEqual("[relay] 403 GET /client/v4/zones secret");
+    expect(lines.join("\n")).not.toContain("tok"); // never the Authorization/secret value
+    expect(lines.join("\n")).not.toContain(SECRET);
+  });
+});

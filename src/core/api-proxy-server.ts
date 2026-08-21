@@ -26,6 +26,9 @@ export interface StartProxyOptions {
   secret: string;
   /** Upstream origin — tests only; defaults to api.cloudflare.com. */
   upstream?: string;
+  /** Per-request access-log sink (method + path + status only — NEVER headers).
+   * The `relay` command passes one so operators can see traffic arriving. */
+  log?: (line: string) => void;
 }
 
 function send(res: http.ServerResponse, code: number, body?: unknown): void {
@@ -42,6 +45,7 @@ function send(res: http.ServerResponse, code: number, body?: unknown): void {
 export function startProxy(opts: StartProxyOptions): Promise<ProxyHandle> {
   const upstream = opts.upstream ?? DEFAULT_UPSTREAM;
   const upstreamOrigin = new URL(upstream).origin;
+  const log = opts.log ?? (() => {});
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch(() => {
@@ -52,7 +56,12 @@ export function startProxy(opts: StartProxyOptions): Promise<ProxyHandle> {
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     // 1. Origin-form only. Reject CONNECT + absolute/authority-form request lines.
+    // Access log: method + path + status only. NEVER headers (no token/secret).
+    const trace = (status: number, note?: string): void =>
+      log(`[relay] ${status} ${req.method} ${req.url ?? "-"}${note ? " " + note : ""}`);
+
     if (req.method === "CONNECT" || !req.url || !req.url.startsWith("/")) {
+      trace(400, "bad-form");
       return send(res, 400, { error: "origin-form request required" });
     }
     // Structural SSRF guard: resolve against the constant upstream and require the
@@ -61,14 +70,17 @@ export function startProxy(opts: StartProxyOptions): Promise<ProxyHandle> {
     try {
       target = new URL(req.url, upstream);
     } catch {
+      trace(400, "bad-path");
       return send(res, 400, { error: "bad request path" });
     }
     if (target.origin !== upstreamOrigin) {
+      trace(400, "ssrf");
       return send(res, 400, { error: "path escapes upstream" });
     }
 
     // 2. Secret gate — before ANY upstream I/O.
     if (req.headers[SECRET_HEADER_LC] !== opts.secret) {
+      trace(403, "secret");
       return send(res, 403, { error: "relay secret missing or invalid" });
     }
 
@@ -94,11 +106,13 @@ export function startProxy(opts: StartProxyOptions): Promise<ProxyHandle> {
     try {
       up = await fetch(target.href, { method: req.method, headers, body, redirect: "manual" });
     } catch {
+      trace(502, "upstream-error");
       return send(res, 502, { error: "relay upstream unreachable" });
     }
 
     // 5. Pass status + content-type + body through. Forward retry-after too, so
     //    the client's rate-limit backoff honors the upstream through the relay.
+    trace(up.status);
     const outHeaders: Record<string, string> = {
       "content-type": up.headers.get("content-type") ?? "application/json",
     };
