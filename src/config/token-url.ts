@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 
-/** The exact scopes cloudtunnel needs. Printed so the user selects them when
- * minting a token — least-privilege, account-wide only where required. */
+/** The exact least-privilege scopes cloudtunnel needs, in the order they appear
+ * on Cloudflare's "Create Custom Token" form. Printed step-by-step so the user
+ * can add them by hand — the dashboard's template-URL pre-fill is unreliable
+ * (silently ignored on some accounts), so we don't depend on it. */
 export const REQUIRED_SCOPES = [
   "Account · Cloudflare Tunnel · Edit",
   "Account · Account Settings · Read",
@@ -9,9 +11,9 @@ export const REQUIRED_SCOPES = [
   "Zone · Zone · Read",
 ] as const;
 
-/** Cloudflare "Create Custom Token" page. `name` is pre-filled best-effort;
- * the user still selects the scopes above (dashboard pre-fill params are not a
- * versioned API, so we rely on the printed scope list, not URL params). */
+/** Cloudflare API-tokens page. We land the user here (single-param URL, so no
+ * shell-escaping needed to open it); they click Create Custom Token and add the
+ * printed REQUIRED_SCOPES. `name` pre-fills the token name best-effort. */
 export function tokenCreateUrl(): string {
   return "https://dash.cloudflare.com/profile/api-tokens?name=cloudtunnel";
 }

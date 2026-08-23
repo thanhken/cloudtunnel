@@ -45,7 +45,15 @@ async function acquireToken(opts: LoginOptions): Promise<{ token: string; fromEn
       hint: "pipe it: `printf %s $TOKEN | cloudtunnel login --token-stdin`",
     });
   }
-  clack.note(REQUIRED_SCOPES.map((s) => `• ${s}`).join("\n"), "Create a token with these scopes");
+  clack.note(
+    [
+      "1. Click  Create Token → Create Custom Token  (Get started)",
+      "2. Under Permissions, add these four:",
+      ...REQUIRED_SCOPES.map((s) => `     • ${s}`),
+      "3. Continue to summary → Create Token → copy it, then paste below",
+    ].join("\n"),
+    "Create a Cloudflare API token",
+  );
   openBrowser(tokenCreateUrl());
   say.dim(`(opened ${tokenCreateUrl()})`);
   const token = await clack.password({ message: "Paste your Cloudflare API token", mask: "•" });

@@ -242,7 +242,7 @@ their output with `cloudtunnel logs <target> -f`.
 
 ## 🔑 Authentication
 
-Create a **Cloudflare API token** with these scopes (least-privilege — a token limited to the domains you tunnel into is recommended):
+`cloudtunnel login` opens the Cloudflare API-tokens page and walks you through it: **Create Token → Create Custom Token**, then add these scopes (least-privilege — a token limited to the domains you tunnel into is recommended):
 
 | Resource | Permission |
 | --- | --- |
@@ -251,7 +251,7 @@ Create a **Cloudflare API token** with these scopes (least-privilege — a token
 | Zone | DNS · **Edit** |
 | Zone | Zone · **Read** |
 
-Provide it via (highest precedence first): `CLOUDFLARE_API_TOKEN` env → `cloudtunnel login --token-stdin` → the hidden prompt from `cloudtunnel login`.
+Provide the token via (highest precedence first): `CLOUDFLARE_API_TOKEN` env → `cloudtunnel login --token-stdin` → the hidden prompt from `cloudtunnel login`.
 
 > 🔒 The token is **never** passed on the command line (that would leak into `ps` / shell history) and is stored `0600`. Rotate it if a shared host is compromised.
 
