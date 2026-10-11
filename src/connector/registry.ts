@@ -19,6 +19,7 @@ export interface RegistryEntry {
   host?: string; // forward target host (absent = localhost)
   protocol?: TransportProtocol; // cloudflared edge transport (absent = auto)
   pid?: number;
+  metricsPort?: number;
   bootId?: string;
   logFile?: string;
   createdAt: string;

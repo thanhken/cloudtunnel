@@ -30,7 +30,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * clean status instead of cloudflared's raw logs.
  */
 export function startConnector(opts: StartOptions): StartedConnector {
-  const args = ["tunnel", "run"];
+  const args = ["tunnel", "run", "--metrics", "127.0.0.1:0"];
   // Edge transport: pass as an explicit flag so it also lands in the connector
   // cmdline (visible/reproducible), not only via env.
   if (opts.protocol) args.push("--protocol", opts.protocol);

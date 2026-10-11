@@ -172,15 +172,47 @@ describe("cfRequest", () => {
     }
   });
 
-  it("handles network errors gracefully", async () => {
-    const mockFetch = vi.fn().mockRejectedValueOnce(new Error("Network timeout"));
+  it("retries on transient network errors (e.g. ENOTFOUND/ETIMEDOUT) and succeeds on recovery", async () => {
+    const netErr = new TypeError("fetch failed");
+    (netErr as unknown as { cause?: { code?: string } }).cause = { code: "ENOTFOUND" };
+
+    const mockFetch = vi.fn()
+      .mockRejectedValueOnce(netErr)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, result: { id: "recovered" } }),
+      });
     vi.stubGlobal("fetch", mockFetch);
 
-    await expect(cfRequest("token", "GET", "/test")).rejects.toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining("Could not reach"),
-      }),
-    );
+    const promise = cfRequest("token", "GET", "/test");
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result.result).toEqual({ id: "recovered" });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("handles network errors gracefully", async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new Error("Network timeout"));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const promise = cfRequest("token", "GET", "/test").catch(() => {});
+    await vi.runAllTimersAsync();
+    await promise;
+    expect(mockFetch.mock.calls.length).toBe(5);
+  });
+
+  it("fails with CliError after network error retries exhausted", async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new Error("Network timeout"));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const promise = cfRequest("token", "GET", "/test");
+    const caught = promise.catch((err) => err);
+    await vi.runAllTimersAsync();
+    const err = await caught;
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as Error).message).toContain("Could not reach");
+    expect(mockFetch).toHaveBeenCalledTimes(5);
   });
 
   it("handles malformed JSON response", async () => {

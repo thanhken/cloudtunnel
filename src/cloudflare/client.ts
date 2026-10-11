@@ -34,7 +34,7 @@ export function resolveCf(): Cf {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Single Cloudflare API call with backoff on 429/5xx (honors Retry-After).
+ * Single Cloudflare API call with backoff on network dropouts and 429/5xx (honors Retry-After).
  * Errors are sanitized — the bearer token is only ever sent in the header and
  * never appears in a thrown message.
  */
@@ -44,9 +44,6 @@ export async function cfRequest<T>(
   path: string,
   body?: unknown,
 ): Promise<CfEnvelope<T>> {
-  // Base + relay secret resolved once per call (env → config → default). The
-  // secret header rides only when the base is actually a relay (non-default), so
-  // it's never sent to api.cloudflare.com; unset base ⇒ identical to today.
   const base = getApiBase();
   const viaRelay = base !== DEFAULT_API_BASE;
   const secret = getRelaySecret();
@@ -66,6 +63,10 @@ export async function cfRequest<T>(
     } catch (err) {
       const reason = fetchErrorReason(err);
       say.debug(`[cf] ${method} ${base}${path} -> network error: ${reason}${viaRelay ? " (relay)" : ""}`);
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(2 ** attempt * 500);
+        continue;
+      }
       throw new CliError(`Could not reach the Cloudflare API (${reason})${viaRelay ? ` via relay ${base}` : ""}.`, {
         hint: viaRelay ? "is the relay tunnel up and the base URL correct? run with CLOUDTUNNEL_DEBUG=1" : undefined,
       });
@@ -78,8 +79,6 @@ export async function cfRequest<T>(
     }
     const env = (await res.json().catch(() => ({}))) as CfEnvelope<T> & { error?: string };
     if (!res.ok || !env.success) {
-      // A relay rejects with its own `{error}` shape (not CF's `{errors}`) — surface
-      // it so a relay/secret failure isn't misread as a Cloudflare API error.
       if (viaRelay && env.error && !env.errors) {
         throw new CliError(`Relay rejected the request (${res.status}): ${env.error}.`, {
           status: res.status,

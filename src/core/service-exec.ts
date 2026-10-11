@@ -48,14 +48,17 @@ export function buildUpArgs(p: ServiceSpecParams): string[] {
     return [
       "relay", p.subdomain, "-d", p.zone,
       ...(p.proto === "https" ? ["--proto", "https"] : []),
+      "--keep-alive",
       "-f", "-y",
     ];
   }
   const spec = formatTunnelSpec({ subdomain: p.subdomain, port: p.port, host: p.host });
+  const proto = p.protocol ?? "http2";
   return [
     "up", spec, "-d", p.zone,
     ...(p.proto === "https" ? ["--proto", "https"] : []),
-    ...(p.protocol ? ["--protocol", p.protocol] : []),
+    "--protocol", proto,
+    "--keep-alive",
     "-f", "-y",
   ];
 }

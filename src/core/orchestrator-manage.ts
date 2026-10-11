@@ -6,6 +6,7 @@ import type { DnsRecord, Tunnel } from "../cloudflare/types.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { entryFqdn, getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
+import { probeEntryState } from "../connector/health.js";
 import { stopConnector } from "../connector/process.js";
 import { serviceUrl } from "./ingress.js";
 import { serviceState } from "./service.js";
@@ -145,21 +146,22 @@ export interface LsRow { num: string; url: string; target: string; protocol: str
 export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsRow[]> {
   const entries = await reconcile();
   const tunnels = new Map((await listTunnels(cf)).map((t) => [t.id, t]));
-  const rows: LsRow[] = entries.map((e) => {
+  const rows: LsRow[] = await Promise.all(entries.map(async (e) => {
     const fqdn = entryFqdn(e);
     const gone = e.tunnelId ? !tunnels.has(e.tunnelId) : false;
     const svc = serviceState(fqdn);
+    const state = await probeEntryState(e, gone);
     return {
       num: e.index ? String(e.index) : "-",
       url: `https://${fqdn}`,
       target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
       protocol: e.protocol ?? "auto",
-      state: !gone && e.state === "running" ? "up" : "down",
+      state,
       service: svc === "none" ? "-" : svc,
       pid: e.state === "running" && e.pid ? String(e.pid) : "-",
       managed: true,
     };
-  });
+  }));
   if (opts.all) {
     const { listCargoCnames } = await import("../cloudflare/dns.js");
     const { listZones } = await import("../cloudflare/zones.js");

@@ -17,6 +17,7 @@ import { assertServiceSupported, installServiceForSpec, serviceLogsHint } from "
 
 interface UpOptions {
   domain?: string;
+  keepAlive?: boolean;
   proto: "http" | "https";
   protocol?: string; // edge transport: auto | http2 | quic
   detach?: boolean;
@@ -95,7 +96,7 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
     return;
   }
 
-  await startTunnels(cf, bin, items, { detach: opts.detach, protocol });
+  await startTunnels(cf, bin, items, { detach: opts.detach, protocol, keepAlive: opts.keepAlive });
 }
 
 /** How long `--service` waits for the boot services to bring their connectors up
@@ -173,6 +174,7 @@ export function registerUp(program: Command): void {
     .option("--proto <proto>", "local service protocol: http | https", "http")
     .option("--protocol <proto>", "cloudflared edge transport: auto | http2 | quic (http2 for UDP-hostile networks)")
     .option("--detach", "run the connectors in the background")
+    .option("--keep-alive", "supervised mode with auto-heal watchdog")
     .option("--service", "register each subdomain as a boot service (Linux systemd · macOS launchd · Windows Task Scheduler)")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't prompt; don't ask before replacing an existing record")

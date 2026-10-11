@@ -18,9 +18,9 @@ const desc: ServiceDescriptor = {
 describe("service-exec", () => {
   it("builds the up args, adding --proto/--protocol only when needed", () => {
     expect(buildUpArgs({ subdomain: "api", port: 8080, host: "localhost", zone: "abc.com", proto: "http" }))
-      .toEqual(["up", "api:8080@localhost", "-d", "abc.com", "-f", "-y"]);
-    expect(buildUpArgs({ subdomain: "api", port: 8080, zone: "abc.com", proto: "https", protocol: "http2" }))
-      .toEqual(["up", "api:8080", "-d", "abc.com", "--proto", "https", "--protocol", "http2", "-f", "-y"]);
+      .toEqual(["up", "api:8080@localhost", "-d", "abc.com", "--protocol", "http2", "--keep-alive", "-f", "-y"]);
+    expect(buildUpArgs({ subdomain: "api", port: 8080, zone: "abc.com", proto: "https", protocol: "quic" }))
+      .toEqual(["up", "api:8080", "-d", "abc.com", "--proto", "https", "--protocol", "quic", "--keep-alive", "-f", "-y"]);
   });
 
   it("slugs the fqdn and maps apex to the bare zone", () => {
@@ -31,10 +31,10 @@ describe("service-exec", () => {
 
   it("builds relay args (relay <sub> …) when command is relay, not up", () => {
     expect(buildUpArgs({ command: "relay", subdomain: "cfapi", port: 0, zone: "abc.com", proto: "http" }))
-      .toEqual(["relay", "cfapi", "-d", "abc.com", "-f", "-y"]);
+      .toEqual(["relay", "cfapi", "-d", "abc.com", "--keep-alive", "-f", "-y"]);
     // relay unit carries no port/protocol; --proto only when https
     expect(buildUpArgs({ command: "relay", subdomain: "cfapi", port: 0, zone: "abc.com", proto: "https" }))
-      .toEqual(["relay", "cfapi", "-d", "abc.com", "--proto", "https", "-f", "-y"]);
+      .toEqual(["relay", "cfapi", "-d", "abc.com", "--proto", "https", "--keep-alive", "-f", "-y"]);
   });
 });
 
@@ -47,7 +47,8 @@ describe("systemd backend", () => {
     expect(u).toContain("ExecStart=/opt/node/bin/node /opt/cloudtunnel/dist/index.js up api:8080@localhost -d abc.com -f -y");
     expect(u).toContain("Environment=PATH=/opt/node/bin:");
     expect(u).toContain("User=thanhnc");
-    expect(u).toContain("Restart=on-failure");
+    expect(u).toContain("Restart=always");
+    expect(u).toContain("StartLimitIntervalSec=0");
     expect(u).toContain("WantedBy=multi-user.target");
   });
 });
@@ -76,7 +77,7 @@ describe("windows backend", () => {
     expect(x).toContain("<LogonTrigger>");
     expect(x).toContain("<UserId>thanhnc</UserId>"); // trigger + principal scoped to the user
     expect(x).toContain("<RunLevel>LeastPrivilege</RunLevel>");
-    expect(x).toContain("<RestartOnFailure>");
+    expect(x).toContain("<RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>");
     expect(x).toContain("<Command>/opt/node/bin/node</Command>");
     expect(x).toContain("up api:8080@localhost -d abc.com -f -y");
   });

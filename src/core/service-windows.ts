@@ -29,7 +29,7 @@ export function buildTaskXml(d: ServiceDescriptor): string {
     "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
     "    <StartWhenAvailable>true</StartWhenAvailable>",
     "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
-    "    <RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>",
+    "    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>",
     "    <Enabled>true</Enabled>",
     "  </Settings>",
     '  <Actions Context="Author">',
