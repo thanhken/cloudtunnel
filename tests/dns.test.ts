@@ -286,3 +286,34 @@ describe("listCargoCnames", () => {
     expect(results).toHaveLength(2);
   });
 });
+
+describe("deleteDnsRecord", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("deletes DNS record successfully", async () => {
+    const { deleteDnsRecord } = await import("../src/cloudflare/dns.js");
+    const mockCfRequest = vi.mocked(cfRequest);
+    mockCfRequest.mockResolvedValueOnce({ success: true, result: {} });
+
+    await expect(deleteDnsRecord("token", "zone-1", "rec-1")).resolves.toBeUndefined();
+    expect(mockCfRequest).toHaveBeenCalledWith("token", "DELETE", "/zones/zone-1/dns_records/rec-1");
+  });
+
+  it("tolerates 404 (Record does not exist) as idempotent success", async () => {
+    const { deleteDnsRecord } = await import("../src/cloudflare/dns.js");
+    const mockCfRequest = vi.mocked(cfRequest);
+    mockCfRequest.mockRejectedValueOnce(new CliError("Record does not exist.", { status: 404 }));
+
+    await expect(deleteDnsRecord("token", "zone-1", "rec-1")).resolves.toBeUndefined();
+  });
+
+  it("re-throws other non-404 errors", async () => {
+    const { deleteDnsRecord } = await import("../src/cloudflare/dns.js");
+    const mockCfRequest = vi.mocked(cfRequest);
+    mockCfRequest.mockRejectedValueOnce(new CliError("Internal Server Error", { status: 500 }));
+
+    await expect(deleteDnsRecord("token", "zone-1", "rec-1")).rejects.toThrow(CliError);
+  });
+});

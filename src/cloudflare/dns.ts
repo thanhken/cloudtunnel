@@ -57,5 +57,10 @@ export async function listCargoCnames(token: string, zoneId: string): Promise<Dn
 }
 
 export async function deleteDnsRecord(token: string, zoneId: string, recordId: string): Promise<void> {
-  await cfRequest<unknown>(token, "DELETE", `/zones/${zoneId}/dns_records/${recordId}`);
+  try {
+    await cfRequest<unknown>(token, "DELETE", `/zones/${zoneId}/dns_records/${recordId}`);
+  } catch (err) {
+    if (err instanceof CliError && err.status === 404) return;
+    throw err;
+  }
 }
