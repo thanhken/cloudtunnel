@@ -37,6 +37,19 @@ export async function createCname(
   return env.result;
 }
 
+export async function findDnsRecords(
+  token: string,
+  zoneId: string,
+  fqdn: string,
+): Promise<DnsRecord[]> {
+  const env = await cfRequest<DnsRecord[]>(
+    token,
+    "GET",
+    `/zones/${zoneId}/dns_records?name=${encodeURIComponent(fqdn)}`,
+  );
+  return env.result ?? [];
+}
+
 export async function findCname(
   token: string,
   zoneId: string,

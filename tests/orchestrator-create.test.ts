@@ -34,6 +34,7 @@ vi.mock("../src/cloudflare/dns.js", () => ({
   createCname: vi.fn(),
   deleteDnsRecord: vi.fn(),
   findCname: vi.fn(),
+  findDnsRecords: vi.fn(async () => []),
   isManagedDns: vi.fn(),
   MANAGED_DNS_COMMENT: "managed-by:cloudtunnel",
 }));

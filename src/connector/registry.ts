@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import lockfile from "proper-lockfile";
@@ -43,6 +44,12 @@ export function currentBootId(): string {
   try {
     return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
   } catch {
+    if (process.platform === "darwin") {
+      try {
+        const out = execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8" }).trim();
+        return `darwin-${out}-${os.hostname()}`;
+      } catch { /* fallback */ }
+    }
     const bootMinute = Math.floor((Date.now() - os.uptime() * 1000) / 60_000);
     return `boot-${bootMinute}-${os.hostname()}`;
   }
@@ -149,7 +156,15 @@ export async function isOurConnector(entry: RegistryEntry): Promise<boolean> {
       return false;
     }
   }
-  return true; // non-Linux: bootId + liveness (best effort)
+  if (process.platform === "darwin") {
+    try {
+      const comm = execFileSync("ps", ["-p", String(entry.pid), "-o", "command="], { encoding: "utf8" });
+      return comm.includes("cloudflared");
+    } catch {
+      return false;
+    }
+  }
+  return true; // other: bootId + liveness
 }
 
 /** Mark entries whose connector is no longer alive as `stopped`. */

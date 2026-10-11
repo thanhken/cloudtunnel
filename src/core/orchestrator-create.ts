@@ -11,7 +11,7 @@ import {
   isManagedTunnel,
   putIngress,
 } from "../cloudflare/tunnels.js";
-import { createCname, deleteDnsRecord, findCname } from "../cloudflare/dns.js";
+import { createCname, deleteDnsRecord, findCname, findDnsRecords } from "../cloudflare/dns.js";
 import type { DnsRecord } from "../cloudflare/types.js";
 import { buildIngress } from "./ingress.js";
 import { resolveHostSpec, type HostSpec } from "./slug.js";
@@ -50,24 +50,23 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
   const host = resolveHostSpec(opts, opts.defaultZone);
   const zone = await resolveZone(cf.token, host.zone);
 
-  const existing = await findCname(cf.token, zone.id, host.hostname);
-  if (existing) {
-    // A leftover tunnel record → replaceable. A non-tunnel DNS record (A record,
-    // ordinary CNAME) → refuse unless --force, to avoid clobbering unrelated DNS.
-    const isTunnelRecord = existing.content.endsWith(".cfargotunnel.com");
+  const existingList = await findDnsRecords(cf.token, zone.id, host.hostname);
+  if (existingList.length > 0) {
+    const isTunnelRecord = existingList.every((r) => r.content.endsWith(".cfargotunnel.com"));
     if (!isTunnelRecord && !opts.force) {
       throw new CliError(`${host.hostname} is taken by a non-tunnel DNS record.`, {
         hint: "pick another --subdomain/--hostname, or pass -f/--force to replace it",
       });
     }
-    // Confirm before replacing an existing record (interactive only; -f/-y skip).
     if (!opts.force && !opts.yes && process.stdin.isTTY) {
       const kind = isTunnelRecord ? "tunnel" : "DNS";
       if (!(await confirm(`${host.hostname} already has a ${kind} record. Replace it?`))) {
         throw new CliError("Cancelled.", { exitCode: 130 });
       }
     }
-    await releaseHostname(cf, zone.id, existing);
+    for (const rec of existingList) {
+      await releaseHostname(cf, zone.id, rec);
+    }
   }
 
   // Track provisioning BEFORE creating anything irreversible.
