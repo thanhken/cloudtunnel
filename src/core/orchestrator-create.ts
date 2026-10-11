@@ -11,7 +11,7 @@ import {
   isManagedTunnel,
   putIngress,
 } from "../cloudflare/tunnels.js";
-import { createCname, deleteDnsRecord, findCname, findDnsRecords } from "../cloudflare/dns.js";
+import { createCname, deleteDnsRecord, findDnsRecords } from "../cloudflare/dns.js";
 import type { DnsRecord } from "../cloudflare/types.js";
 import { buildIngress } from "./ingress.js";
 import { resolveHostSpec, type HostSpec } from "./slug.js";
