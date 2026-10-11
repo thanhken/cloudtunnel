@@ -5,11 +5,12 @@ import { say, printTable } from "../ui/output.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { ensureCloudflared } from "../connector/binary.js";
+import { checkLocalReady } from "../connector/health.js";
 import type { CreateOptions } from "../core/orchestrator-create.js";
 import { startTunnels } from "../core/up-runner.js";
 import { resolveDomain } from "../core/resolve-domain.js";
 import { listAll } from "../core/orchestrator-manage.js";
-import { getEntry } from "../connector/registry.js";
+import { getEntry, isOurConnector, patchEntry } from "../connector/registry.js";
 import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
 import { parseTransportProtocol, type TransportProtocol } from "../core/transport-protocol.js";
 import { randomSlug } from "../core/slug.js";
@@ -100,17 +101,16 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
 }
 
 /** How long `--service` waits for the boot services to bring their connectors up
- * before showing the `ls` view (registry "running" lands within a few seconds). */
-const SERVICE_UP_TIMEOUT_MS = 20_000;
+ * before showing the `ls` view (restarting + provisioning + edge handshake). */
+const SERVICE_UP_TIMEOUT_MS = 30_000;
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Install + start a boot service per subdomain (systemd `enable --now` · launchd
- * `RunAtLoad` · Task Scheduler `/Run` all start it now and on boot), then WAIT for
- * the services to bring their connectors up and show the `ls` view. The services
- * own the connector; the CLI just watches the registry they write — so `ls`/`ps`
- * shows them right after this returns instead of after an invisible delay.
- * `--detach` is a no-op here — the service already backgrounds.
+ * Install + start a boot service per subdomain (systemd `enable` + `restart` ·
+ * launchd `unload` + `load` · Task Scheduler `/End` + `/Run`), then WAIT for the
+ * services to bring their connectors up and show the `ls` view. Existing registry
+ * entries are reset to `provisioning` beforehand so a previous PID is never
+ * mistaken for the newly restarted service.
  */
 async function registerServices(
   cf: Cf, items: CreateOptions[], domain: string,
@@ -125,6 +125,7 @@ async function registerServices(
   for (const item of items) {
     const subdomain = item.name!; // concrete (baked above)
     const fqdn = subdomain === "@" ? domain : `${subdomain}.${domain}`;
+    await patchEntry(fqdn, { state: "provisioning", pid: undefined, metricsPort: undefined });
     installServiceForSpec({ subdomain, port: item.port, host: item.host, zone: domain, proto, protocol });
     fqdns.push(fqdn);
   }
@@ -148,19 +149,30 @@ async function registerServices(
   say.dim("  → manage: cloudtunnel ls   ·   remove: cloudtunnel delete <#>");
 }
 
-/** Poll the registry until every fqdn's service has a live connector (state
- * "running" + a pid), or the timeout elapses. Returns the fqdns still not up.
- * Reads the registry the boot service writes; a pid means `ls` will show "up". */
+/** Poll the registry until every fqdn's service has a live, edge-ready connector,
+ * or the timeout elapses. Returns the fqdns whose connector process never started. */
 async function waitServicesUp(fqdns: string[], timeoutMs: number): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
   const pending = new Set(fqdns);
   while (pending.size > 0) {
     for (const fqdn of [...pending]) {
       const entry = getEntry(fqdn);
-      if (entry?.state === "running" && entry.pid) pending.delete(fqdn);
+      if (entry?.state === "running" && entry.pid && (await isOurConnector(entry))) {
+        if (!entry.metricsPort || (await checkLocalReady(entry.metricsPort, { timeoutMs: 500 })).healthy) {
+          pending.delete(fqdn);
+        }
+      }
     }
     if (pending.size === 0 || Date.now() >= deadline) break;
     await delay(500);
+  }
+  // If the connector process is alive at deadline (still completing edge handshake),
+  // don't alarm that the service failed to start.
+  for (const fqdn of [...pending]) {
+    const entry = getEntry(fqdn);
+    if (entry?.state === "running" && entry.pid && (await isOurConnector(entry))) {
+      pending.delete(fqdn);
+    }
   }
   return [...pending];
 }

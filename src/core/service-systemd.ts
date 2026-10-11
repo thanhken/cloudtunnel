@@ -64,14 +64,16 @@ export function assertSupported(): void {
   }
 }
 
-/** Install + enable a boot unit (runs now + on boot). Needs sudo. */
+/** Install + enable a boot unit (restarts if already running, starts if stopped). Needs sudo. */
 export function install(d: ServiceDescriptor): void {
   assertSupported();
-  const tmp = join(tmpdir(), label(d.fqdn));
+  const name = label(d.fqdn);
+  const tmp = join(tmpdir(), name);
   writeFileSync(tmp, buildUnit(d), { mode: 0o644 });
   privileged(["install", "-m", "0644", tmp, unitPath(d.fqdn)]);
   privileged(["systemctl", "daemon-reload"]);
-  privileged(["systemctl", "enable", "--now", label(d.fqdn)]);
+  privileged(["systemctl", "enable", name]);
+  privileged(["systemctl", "restart", name]);
 }
 
 /** Stop, disable, and delete the unit. Needs sudo. Best-effort. */

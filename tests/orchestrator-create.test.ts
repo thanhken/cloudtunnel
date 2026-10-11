@@ -25,7 +25,10 @@ afterEach(() => {
 vi.mock("../src/cloudflare/tunnels.js", () => ({
   createTunnel: vi.fn(),
   deleteTunnel: vi.fn(),
+  deleteTunnelWithConnections: vi.fn(),
+  getTunnel: vi.fn(),
   getTunnelToken: vi.fn(),
+  isManagedTunnel: vi.fn(() => true),
   putIngress: vi.fn(),
   MANAGED_TUNNEL_PREFIX: "ct-",
 }));
@@ -44,10 +47,15 @@ vi.mock("../src/cloudflare/zones.js", () => ({
 }));
 
 vi.mock("../src/connector/registry.js", () => ({
+  getEntry: vi.fn(() => undefined),
   upsertEntry: vi.fn(),
   patchEntry: vi.fn(),
   removeEntry: vi.fn(),
   currentBootId: vi.fn(),
+}));
+
+vi.mock("../src/connector/process.js", () => ({
+  stopConnector: vi.fn(async () => true),
 }));
 
 describe("createTunnelSubdomain", () => {
@@ -98,6 +106,54 @@ describe("createTunnelSubdomain", () => {
       zone: "example.com",
     });
     expect(vi.mocked(upsertEntry)).toHaveBeenCalled();
+  });
+
+  it("stops an existing local connector and clears stale pid before re-provisioning", async () => {
+    const { createTunnelSubdomain } = await import("../src/core/orchestrator-create.js");
+    const { createTunnel, getTunnelToken, putIngress } = await import("../src/cloudflare/tunnels.js");
+    const { createCname } = await import("../src/cloudflare/dns.js");
+    const { resolveZone } = await import("../src/cloudflare/zones.js");
+    const { getEntry, upsertEntry, currentBootId } = await import("../src/connector/registry.js");
+    const { stopConnector } = await import("../src/connector/process.js");
+
+    const prevEntry = {
+      subdomain: "app",
+      zone: "example.com",
+      zoneId: "zone-789",
+      port: 3000,
+      proto: "http" as const,
+      pid: 9999,
+      metricsPort: 41234,
+      createdAt: "2026-10-01T00:00:00Z",
+      state: "running" as const,
+    };
+    vi.mocked(getEntry).mockReturnValueOnce(prevEntry);
+    vi.mocked(createTunnel).mockResolvedValue({ id: "tunnel-123", name: "ct-test-abcd" });
+    vi.mocked(getTunnelToken).mockResolvedValue("token-xyz");
+    vi.mocked(putIngress).mockResolvedValue(undefined);
+    vi.mocked(createCname).mockResolvedValue({
+      id: "dns-456",
+      type: "CNAME",
+      name: "app.example.com",
+      content: "tunnel-123.cfargotunnel.com",
+      proxied: true,
+    });
+    vi.mocked(resolveZone).mockResolvedValue({ id: "zone-789", name: "example.com" });
+    vi.mocked(upsertEntry).mockResolvedValue(undefined);
+    vi.mocked(currentBootId).mockResolvedValue("boot-id-stable");
+
+    await createTunnelSubdomain({ token: "cf-token", accountId: "account-123" }, {
+      port: 3000,
+      proto: "http",
+      hostname: "app.example.com",
+    });
+
+    expect(stopConnector).toHaveBeenCalledWith(prevEntry);
+    expect(vi.mocked(upsertEntry).mock.calls[0]?.[1]).toMatchObject({
+      state: "provisioning",
+      pid: undefined,
+      metricsPort: undefined,
+    });
   });
 
   it("rolls back tunnel creation when CNAME creation fails", async () => {
@@ -236,7 +292,7 @@ describe("createTunnelSubdomain", () => {
 
     // The last call should have state: "running"
     const lastCall = vi.mocked(upsertEntry).mock.calls[vi.mocked(upsertEntry).mock.calls.length - 1];
-    expect(lastCall[1]).toMatchObject({
+    expect(lastCall?.[1]).toMatchObject({
       state: "running",
       tunnelId: "tunnel-123",
       dnsRecordId: "dns-456",

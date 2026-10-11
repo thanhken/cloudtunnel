@@ -15,7 +15,8 @@ import { createCname, deleteDnsRecord, findDnsRecords } from "../cloudflare/dns.
 import type { DnsRecord } from "../cloudflare/types.js";
 import { buildIngress } from "./ingress.js";
 import { resolveHostSpec, type HostSpec } from "./slug.js";
-import { currentBootId, patchEntry, removeEntry, upsertEntry } from "../connector/registry.js";
+import { currentBootId, getEntry, patchEntry, removeEntry, upsertEntry } from "../connector/registry.js";
+import { stopConnector } from "../connector/process.js";
 import { CliError } from "../ui/errors.js";
 import { confirm, say } from "../ui/output.js";
 
@@ -64,15 +65,21 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
         throw new CliError("Cancelled.", { exitCode: 130 });
       }
     }
+    const prev = getEntry(host.hostname);
+    if (prev) await stopConnector(prev);
     for (const rec of existingList) {
       await releaseHostname(cf, zone.id, rec);
     }
+  } else {
+    const prev = getEntry(host.hostname);
+    if (prev) await stopConnector(prev);
   }
 
-  // Track provisioning BEFORE creating anything irreversible.
+  // Track provisioning BEFORE creating anything irreversible; clear stale pid/metricsPort.
   await upsertEntry(host.hostname, {
     subdomain: host.subdomain, zone: host.zone, zoneId: zone.id,
     port: opts.port, proto: opts.proto, host: opts.host, state: "provisioning",
+    pid: undefined, metricsPort: undefined,
   });
 
   let tunnelId: string | undefined;

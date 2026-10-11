@@ -31,7 +31,7 @@ export function buildTaskXml(d: ServiceDescriptor): string {
     "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
     "    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>",
     "    <Enabled>true</Enabled>",
-    "  </Settings>",
+    "</Settings>",
     '  <Actions Context="Author">',
     `    <Exec><Command>${xml(d.nodePath)}</Command><Arguments>${xml(args)}</Arguments></Exec>`,
     "  </Actions>",
@@ -56,10 +56,12 @@ export function assertSupported(): void {
 
 export function install(d: ServiceDescriptor): void {
   const file = join(tmpdir(), `${d.slug}.task.xml`);
+  const name = label(d.fqdn);
   // schtasks /XML wants a UTF-16 file with a BOM.
-  writeFileSync(file, "\uFEFF" + buildTaskXml(d), { encoding: "utf16le" });
-  execFileSync("schtasks", ["/Create", "/TN", label(d.fqdn), "/XML", file, "/F"], { stdio: "inherit" });
-  schtasks(["/Run", "/TN", label(d.fqdn)]); // start now
+  writeFileSync(file, "﻿" + buildTaskXml(d), { encoding: "utf16le" });
+  schtasks(["/End", "/TN", name]); // best-effort: stop existing instance before re-creating
+  execFileSync("schtasks", ["/Create", "/TN", name, "/XML", file, "/F"], { stdio: "inherit" });
+  schtasks(["/Run", "/TN", name]); // start now
 }
 
 export function uninstall(fqdn: string): void {
