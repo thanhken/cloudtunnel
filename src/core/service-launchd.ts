@@ -21,7 +21,7 @@ const xml = (s: string): string =>
 export function buildPlist(d: ServiceDescriptor): string {
   const args = [d.nodePath, d.scriptPath, ...d.argv].map((a) => `    <string>${xml(a)}</string>`).join("\n");
   const nodeBin = dirname(d.nodePath);
-  const path = `${nodeBin}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
+  const path = `${nodeBin}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
