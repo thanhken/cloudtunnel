@@ -167,15 +167,29 @@ export async function isOurConnector(entry: RegistryEntry): Promise<boolean> {
   return true; // other: bootId + liveness
 }
 
-/** Mark entries whose connector is no longer alive as `stopped`. */
+/** Record a freshly started connector: pid + metrics port, and flip the entry
+ * to `running` in the same locked write. Every (re)start must go through this —
+ * a concurrent `reconcile` may have marked the entry `stopped` while the old
+ * connector was being replaced, and patching only the pid would leave it stuck. */
+export function markConnectorRunning(
+  fqdn: string,
+  patch: Pick<RegistryEntry, "pid"> & Partial<Pick<RegistryEntry, "metricsPort" | "bootId" | "logFile" | "protocol" | "tunnelId">>,
+): Promise<void> {
+  return patchEntry(fqdn, { bootId: currentBootId(), ...patch, state: "running" });
+}
+
+/** Mark entries whose connector is no longer alive as `stopped`. The liveness
+ * probe runs outside the lock, so the write re-checks that the entry still
+ * holds the pid that was probed — a connector restarted in between keeps its
+ * fresh pid instead of being clobbered. */
 export async function reconcile(): Promise<RegistryEntry[]> {
   const entries = listEntries();
   for (const entry of entries) {
-    if (entry.state === "running" && !(await isOurConnector(entry))) {
+    if (entry.state === "running" && entry.pid && !(await isOurConnector(entry))) {
       const fqdn = entryFqdn(entry);
       await mutateRegistry((reg) => {
         const e = reg[fqdn];
-        if (e) {
+        if (e && e.state === "running" && e.pid === entry.pid) {
           e.state = "stopped";
           delete e.pid;
         }

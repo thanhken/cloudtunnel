@@ -8,6 +8,34 @@ import type { TransportProtocol } from "./transport-protocol.js";
 
 export type ServiceState = "active" | "enabled" | "disabled" | "none";
 
+/**
+ * Generation of the boot-service definition this build writes. Bump it whenever
+ * the unit/plist/task content changes in a way existing installs must pick up
+ * (restart policy, args, env): `cloudtunnel service repair` — and the first
+ * interactive command after an upgrade — regenerate anything older. Definitions
+ * written before the marker existed read as generation 1.
+ */
+export const SERVICE_SCHEMA = 2;
+const SCHEMA_RE = /cloudtunnel-schema:\s*(\d+)/;
+export const schemaMarker = `cloudtunnel-schema: ${SERVICE_SCHEMA}`;
+
+/** The schema generation recorded in a definition's text (1 when unmarked). */
+export function schemaOf(text: string): number {
+  const m = SCHEMA_RE.exec(text);
+  return m ? Number(m[1]) : 1;
+}
+
+/** An installed boot-service definition, as read back from the OS. */
+export interface InstalledDefinition {
+  label: string; // backend id: unit file name / launchd label / task path
+  command: string[]; // [nodePath, scriptPath, ...cloudtunnel argv]
+  schema: number;
+  running: boolean;
+}
+
+export const unxml = (s: string): string =>
+  s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+
 /** What `up --service` (and the migration) hand to a platform backend. */
 export interface ServiceSpecParams {
   subdomain: string;

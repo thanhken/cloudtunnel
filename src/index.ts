@@ -11,6 +11,8 @@ import { registerLs } from "./commands/ls.js";
 import { registerDelete } from "./commands/delete.js";
 import { registerLogs } from "./commands/logs.js";
 import { registerRelay } from "./commands/relay.js";
+import { registerService } from "./commands/service.js";
+import { maybeRepairServicesAfterUpgrade } from "./core/service-upgrade-check.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
@@ -35,7 +37,7 @@ function buildProgram(): Command {
     ].join("\n"),
   );
 
-  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerRelay]) {
+  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerRelay, registerService]) {
     register(program);
   }
   return program;
@@ -56,6 +58,9 @@ async function main(): Promise<void> {
   configureProxy();
   // One-time, best-effort upgrade from the old profile model.
   if (shouldMigrate(process.argv)) await migrateLegacyProfiles();
+  // After an upgrade, offer to bring boot services written by older versions
+  // (or left down by them) back up — once per version, interactive only.
+  await maybeRepairServicesAfterUpgrade(pkg.version, process.argv);
   const program = buildProgram();
   try {
     await program.parseAsync(process.argv);

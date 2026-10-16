@@ -30,6 +30,9 @@ export interface CreateOptions {
   defaultZone?: string;
   force?: boolean;
   yes?: boolean; // skip the "replace existing record?" confirmation
+  /** Warm restart: keep the hostname's tunnel + DNS when they still match the
+   * registry entry (supervised/boot-service restarts) instead of recreating. */
+  reuse?: boolean;
 }
 
 export interface CreateResult {
@@ -52,6 +55,10 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
   const zone = await resolveZone(cf.token, host.zone);
 
   const existingList = await findDnsRecords(cf.token, zone.id, host.hostname);
+  if (opts.reuse) {
+    const reused = await tryReuseTunnel(cf, zone.id, host, opts, existingList);
+    if (reused) return reused;
+  }
   if (existingList.length > 0) {
     const isTunnelRecord = existingList.every((r) => r.content.endsWith(".cfargotunnel.com"));
     if (!isTunnelRecord && !opts.force) {
@@ -101,6 +108,37 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
     else await patchEntry(host.hostname, { state: "orphaned" });
     throw err;
   }
+}
+
+/**
+ * Reuse the tunnel the registry already tracks for this hostname when its DNS
+ * record is the only one and still points at it, and the tunnel is a live,
+ * cloudtunnel-managed one. Ingress is re-applied (port/host may have changed)
+ * and a fresh token fetched. This keeps restarts cheap (no DNS churn) and never
+ * deletes a tunnel another supervisor's connector is serving. Returns null when
+ * a full recreate is needed; transient API errors propagate so the caller
+ * retries instead of tearing the hostname down.
+ */
+async function tryReuseTunnel(
+  cf: Cf, zoneId: string, host: HostSpec, opts: CreateOptions, existing: DnsRecord[],
+): Promise<CreateResult | null> {
+  const prev = getEntry(host.hostname);
+  const tunnelId = prev?.tunnelId;
+  const record = existing[0];
+  if (!prev || !tunnelId || existing.length !== 1 || record?.content !== `${tunnelId}.cfargotunnel.com`) return null;
+  let tunnel;
+  try {
+    tunnel = await getTunnel(cf, tunnelId);
+  } catch (err) {
+    if (err instanceof CliError && err.status === 404) return null;
+    throw err;
+  }
+  if (!isManagedTunnel(tunnel) || tunnel.deleted_at) return null;
+  await putIngress(cf, tunnelId, buildIngress({ hostname: host.hostname, port: opts.port, proto: opts.proto, host: opts.host }));
+  const token = await getTunnelToken(cf, tunnelId);
+  await stopConnector(prev);
+  await recordRunning(host, zoneId, tunnelId, record.id, opts);
+  return { host, tunnelId, token };
 }
 
 async function recordRunning(host: HostSpec, zoneId: string, tunnelId: string, dnsRecordId: string, opts: CreateOptions): Promise<void> {

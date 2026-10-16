@@ -21,6 +21,7 @@ interface RelayOptions {
   domain?: string;
   detach?: boolean;
   service?: boolean;
+  keepAlive?: boolean; // supervised (boot-service) run: auto-heal, never release on exit
   force?: boolean;
   yes?: boolean;
 }
@@ -115,7 +116,7 @@ async function runRelay(sub: string, opts: RelayOptions): Promise<void> {
     port: proxy.port, proto: "http", name: sub, zone: domain,
     defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,
   };
-  await startTunnels(cf, bin, [item], {});
+  await startTunnels(cf, bin, [item], { keepAlive: opts.keepAlive });
   printRelayReady(fqdn, secret, "foreground");
 }
 
@@ -126,6 +127,7 @@ export function registerRelay(program: Command): void {
     .option("-d, --domain <domain>", "domain for the relay subdomain (prompted from a list if unset)")
     .option("--detach", "run the relay in the background")
     .option("--service", "register the relay as a boot service (systemd · launchd · Task Scheduler)")
+    .option("--keep-alive", "supervised mode with auto-heal watchdog (used by the boot service)")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't prompt before replacing an existing record")
     .action((subdomain: string | undefined, opts: RelayOptions) => runRelay(subdomain ?? DEFAULT_SUB, opts));

@@ -10,6 +10,7 @@ import { probeEntryState } from "../connector/health.js";
 import { stopConnector } from "../connector/process.js";
 import { serviceUrl } from "./ingress.js";
 import { serviceState } from "./service.js";
+import { serviceIssuesByFqdn } from "./service-inventory.js";
 import { saveUnmanagedScan, type ScannedUnmanaged } from "./unmanaged-scan-cache.js";
 
 const tunnelIdFromCname = (content: string): string => content.replace(/\.cfargotunnel\.com\.?$/, "");
@@ -136,7 +137,11 @@ export async function removeTunnelById(cf: Cf, tunnel: Tunnel, opts: RemoveOptio
   if (!opts.quiet) say.ok(`Released tunnel ${tunnel.id}`);
 }
 
-export interface LsRow { num: string; url: string; target: string; protocol: string; state: string; service: string; pid: string; managed: boolean }
+export interface LsRow {
+  num: string; url: string; target: string; protocol: string; state: string; service: string; pid: string; managed: boolean;
+  /** Set when the boot service needs `cloudtunnel service repair`. */
+  serviceIssue?: string;
+}
 
 /** Reconcile + list tracked subdomains: `# | URL | TARGET | PROTOCOL | STATE | SERVICE | PID`.
  * PROTOCOL is the cloudflared edge transport the connector was started with
@@ -146,20 +151,24 @@ export interface LsRow { num: string; url: string; target: string; protocol: str
 export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsRow[]> {
   const entries = await reconcile();
   const tunnels = new Map((await listTunnels(cf)).map((t) => [t.id, t]));
+  const issues = serviceIssuesByFqdn();
   const rows: LsRow[] = await Promise.all(entries.map(async (e) => {
     const fqdn = entryFqdn(e);
     const gone = e.tunnelId ? !tunnels.has(e.tunnelId) : false;
     const svc = serviceState(fqdn);
     const state = await probeEntryState(e, gone);
+    const issue = issues.get(fqdn);
+    const svcLabel = svc === "none" ? "-" : svc;
     return {
       num: e.index ? String(e.index) : "-",
       url: `https://${fqdn}`,
       target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
       protocol: e.protocol ?? "auto",
       state,
-      service: svc === "none" ? "-" : svc,
+      service: issue ? `${svcLabel} (${issue})` : svcLabel,
       pid: e.state === "running" && e.pid ? String(e.pid) : "-",
       managed: true,
+      serviceIssue: issue,
     };
   }));
   if (opts.all) {

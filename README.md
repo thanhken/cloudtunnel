@@ -69,6 +69,7 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 | `delete <target…>` | Release tunnel(s) — connector + tunnel + DNS + boot service. `--all`, `--dry-run`, `-f`. |
 | `logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
 | `relay [sub]` | Expose a locked Cloudflare-API proxy — manage tunnels from behind a CF-API block (see below). |
+| `service repair` | Regenerate + restart boot services that are outdated, broken, stopped, or duplicated. `-y`, `--dry-run`. |
 
 A **`<target>`** is a `#` number, a subdomain, a full hostname/URL, or a tunnel-id prefix. `ls --all` also numbers tunnels created elsewhere (or leaked by a failed run); pair with `-f` when they aren't cloudtunnel-managed.
 
@@ -92,7 +93,8 @@ $ cloudtunnel delete --all    # release everything
 Each is just a flag or subcommand away:
 
 - **Edge transport** — `--protocol auto|http2|quic`. cloudflared uses QUIC (UDP) by default; force `http2` (TCP) on networks that drop idle UDP and cause intermittent 530/502. Shows in the `ls` PROTOCOL column, works with `--detach`/`--service`.
-- **Run on boot** — `--service` registers a native OS service **per subdomain** so it comes back after a restart: systemd (Linux, sudo) · launchd (macOS) · Task Scheduler (Windows). The subdomain is baked in, so the URL stays stable; `delete` removes it. After install it waits (≤20s) for each connector and prints `ls`.
+- **Run on boot** — `--service` registers a native OS service **per subdomain** so it comes back after a restart: systemd (Linux, sudo) · launchd (macOS) · Task Scheduler (Windows). The subdomain is baked in, so the URL stays stable; `delete` removes it. After install it waits (≤30s) for each connector and prints `ls`. A service never gives up: it waits for the network at boot, restarts a crashed connector right away, and a restart reuses the existing tunnel + DNS (no churn).
+- **Self-healing upgrades** — after `npm i -g` a running service restarts itself onto the new version (Linux/macOS). The first interactive command after an upgrade finds boot services written by an older version (or broken, stopped, duplicated) and offers to repair them in one go; `ls` flags them as `(stale)` / `(broken)` / `(dead)` / `(duplicate)`. Run `cloudtunnel service repair` any time.
 - **Background** — `--detach` keeps connectors running after the CLI exits. Release with `delete <target>`, tail with `logs <target> -f`.
 - **Behind a proxy** — auto-routes `fetch` through `HTTPS_PROXY`/`HTTP_PROXY` (and, on Linux/GNOME, the system proxy). Set `HTTPS_PROXY` once if needed.
 
@@ -145,6 +147,8 @@ Provide the token via (highest precedence first): `CLOUDFLARE_API_TOKEN` env →
 | Symptom | Cause & fix |
 | --- | --- |
 | **HTTP 1016** / subdomain won't load | The connector isn't running (`STATE = down` in `ls`). Bring it back up: `cloudtunnel <spec>`. |
+| **`--service` set but `STATE = down`** | Run `cloudtunnel service repair`. Logs: Linux `journalctl -u cloudtunnel-<slug>` · macOS `~/Library/Preferences/cloudtunnel/logs/<slug>.service.log` · Windows `schtasks /Query /TN "cloudtunnel\<slug>" /V`. |
+| **"already being served by another cloudtunnel process"** | A boot service owns that hostname — use `ls` / `logs`, or `delete <#>` before running it by hand. |
 | **`delete` says "active connections"** | Handled automatically — cloudtunnel cleans up the connections and retries. |
 | **"grey-clouded" error** | cfargotunnel routing needs an orange-cloud (proxied) CNAME. |
 | **A DNS record already occupies the name** | Pick another subdomain/domain, or pass `-f/--force` to replace a non-tunnel record. |

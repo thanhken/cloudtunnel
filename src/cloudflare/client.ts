@@ -6,6 +6,10 @@ import { RELAY_SECRET_HEADER, getRelaySecret } from "../config/relay-secret.js";
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 4;
+/** Hard cap per attempt (connect + headers + body). Without it a half-open
+ * connection (wake from sleep, Wi-Fi switch) can hang a call for minutes and
+ * stall a boot service before it ever starts its connector. */
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /** Resolved Cloudflare context for account-scoped calls. */
 export interface Cf {
@@ -54,14 +58,21 @@ export async function cfRequest<T>(
   if (secret && viaRelay) headers[RELAY_SECRET_HEADER] = secret;
   for (let attempt = 0; ; attempt++) {
     let res: Response;
+    let env: CfEnvelope<T> & { error?: string };
+    const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     try {
       res = await fetch(`${base}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal,
       });
+      env = (await res.json().catch((err: unknown) => {
+        if (signal.aborted) throw err; // body stalled past the timeout → network error
+        return {};
+      })) as CfEnvelope<T> & { error?: string };
     } catch (err) {
-      const reason = fetchErrorReason(err);
+      const reason = signal.aborted ? "timeout" : fetchErrorReason(err);
       say.debug(`[cf] ${method} ${base}${path} -> network error: ${reason}${viaRelay ? " (relay)" : ""}`);
       if (attempt < MAX_ATTEMPTS) {
         await sleep(2 ** attempt * 500);
@@ -77,7 +88,6 @@ export async function cfRequest<T>(
       await sleep(retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 500);
       continue;
     }
-    const env = (await res.json().catch(() => ({}))) as CfEnvelope<T> & { error?: string };
     if (!res.ok || !env.success) {
       if (viaRelay && env.error && !env.errors) {
         throw new CliError(`Relay rejected the request (${res.status}): ${env.error}.`, {

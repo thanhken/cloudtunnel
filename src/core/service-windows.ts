@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { serviceSlug, type ServiceDescriptor, type ServiceState } from "./service-exec.js";
+import { schemaMarker, schemaOf, serviceSlug, unxml, type InstalledDefinition, type ServiceDescriptor, type ServiceState } from "./service-exec.js";
 
 /** Task Scheduler path: a task named by the fqdn slug under a `cloudtunnel` folder. */
 export const label = (fqdn: string): string => `cloudtunnel\\${serviceSlug(fqdn)}`;
@@ -20,7 +20,7 @@ export function buildTaskXml(d: ServiceDescriptor): string {
   return [
     '<?xml version="1.0" encoding="UTF-16"?>',
     '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
-    `  <RegistrationInfo><Description>cloudtunnel ${xml(d.fqdn)} (Cloudflare Tunnel)</Description></RegistrationInfo>`,
+    `  <RegistrationInfo><Description>cloudtunnel ${xml(d.fqdn)} (Cloudflare Tunnel) [${schemaMarker}]</Description></RegistrationInfo>`,
     `  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>${xml(d.user)}</UserId></LogonTrigger></Triggers>`,
     `  <Principals><Principal id="Author"><UserId>${xml(d.user)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>`,
     "  <Settings>",
@@ -65,7 +65,39 @@ export function install(d: ServiceDescriptor): void {
 }
 
 export function uninstall(fqdn: string): void {
-  schtasks(["/Delete", "/TN", label(fqdn), "/F"]);
+  uninstallLabel(label(fqdn));
+}
+
+export function uninstallLabel(name: string): void {
+  schtasks(["/End", "/TN", name]);
+  schtasks(["/Delete", "/TN", name, "/F"]);
+}
+
+export function prepareChanges(): void {
+  /* LeastPrivilege logon tasks need no elevation */
+}
+
+/** Split a Task Scheduler argument string, honoring double quotes. */
+function splitArgs(args: string): string[] {
+  return [...args.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2] ?? "");
+}
+
+/** Parse one task's exported XML into an installed definition (pure — unit-tested). */
+export function parseTaskXml(name: string, xmlText: string, running: boolean): InstalledDefinition {
+  const command = unxml(/<Command>([\s\S]*?)<\/Command>/.exec(xmlText)?.[1] ?? "");
+  const args = unxml(/<Arguments>([\s\S]*?)<\/Arguments>/.exec(xmlText)?.[1] ?? "");
+  return { label: name, command: command ? [command, ...splitArgs(args)] : [], schema: schemaOf(xmlText), running };
+}
+
+/** Every per-subdomain task under the `cloudtunnel` folder. */
+export function listInstalled(): InstalledDefinition[] {
+  const names = schtasks(["/Query", "/FO", "CSV", "/NH"])
+    .split(/\r?\n/)
+    .map((line) => /^"([^"]+)"/.exec(line)?.[1]?.replace(/^\\/, ""))
+    .filter((n): n is string => !!n && /^cloudtunnel\\/i.test(n));
+  // Task status strings are localized, so "not running" can't be told apart
+  // reliably: report running and let stale/broken/duplicate drive repairs.
+  return [...new Set(names)].map((name) => parseTaskXml(name, schtasks(["/Query", "/TN", name, "/XML"]), true));
 }
 
 export function state(fqdn: string): ServiceState {

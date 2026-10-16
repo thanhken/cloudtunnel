@@ -11,6 +11,9 @@ export interface CloudtunnelConfig {
   apiBase?: string;
   /** Shared secret required by / sent to the relay proxy. See `config/relay-secret.ts`. */
   relaySecret?: string;
+  /** cloudtunnel version whose boot services were last checked after an
+   * upgrade (see `core/service-upgrade-check.ts`). */
+  serviceCheckVersion?: string;
 }
 
 export interface Credentials {

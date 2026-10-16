@@ -1,7 +1,10 @@
 import { join } from "node:path";
 import { CliError } from "../ui/errors.js";
 import { logDir } from "../config/paths.js";
-import { describeService, serviceSlug, type ServiceDescriptor, type ServiceSpecParams, type ServiceState } from "./service-exec.js";
+import {
+  describeService, serviceSlug,
+  type InstalledDefinition, type ServiceDescriptor, type ServiceSpecParams, type ServiceState,
+} from "./service-exec.js";
 import * as systemd from "./service-systemd.js";
 import * as launchd from "./service-launchd.js";
 import * as windows from "./service-windows.js";
@@ -15,6 +18,9 @@ interface Backend {
   install(d: ServiceDescriptor): void;
   uninstall(fqdn: string): void;
   state(fqdn: string): ServiceState;
+  listInstalled(): InstalledDefinition[];
+  uninstallLabel(label: string): void;
+  prepareChanges(): void;
 }
 
 /** The backend for the current OS, or null where boot services aren't supported. */
@@ -57,6 +63,21 @@ export function installServiceForSpec(params: ServiceSpecParams): void {
 /** Remove a subdomain's boot service (best-effort; no-op on unsupported OS). */
 export function uninstallService(fqdn: string): void {
   pick()?.uninstall(fqdn);
+}
+
+/** Every cloudtunnel boot-service definition installed here ([] where unsupported). */
+export function listInstalledServices(): InstalledDefinition[] {
+  return pick()?.listInstalled() ?? [];
+}
+
+/** Remove a definition by its backend label (stray/duplicate cleanup). */
+export function uninstallServiceLabel(label: string): void {
+  pick()?.uninstallLabel(label);
+}
+
+/** One-time setup before a batch of service changes (Linux: cache sudo). */
+export function prepareServiceChanges(): void {
+  pick()?.prepareChanges();
 }
 
 /** Current state of a subdomain's service ("none" on an unsupported OS). */

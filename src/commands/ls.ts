@@ -22,5 +22,7 @@ export function registerLs(program: Command): void {
         ["#", "URL", "TARGET", "PROTOCOL", "STATE", "SERVICE", "PID"],
         rows.map((r) => [r.num, r.url, r.target, r.protocol, r.state, r.service, r.pid]),
       );
+      const needRepair = rows.filter((r) => r.serviceIssue).length;
+      if (needRepair) say.warn(`${needRepair} boot service(s) need repair → cloudtunnel service repair`);
     });
 }
