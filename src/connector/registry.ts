@@ -36,19 +36,37 @@ export function entryFqdn(e: Pick<RegistryEntry, "subdomain" | "zone">): string 
 
 type Registry = Record<string, RegistryEntry>;
 
+/** macOS per-boot id. `kern.bootsessionuuid` is the native equivalent of Linux
+ * boot_id: fixed for the whole boot. It must NOT mix in `os.hostname()` (macOS
+ * renames the host when the network changes) or the raw `kern.boottime` text
+ * (its usec — and after sleep/wake clock steps even its sec — drift): either
+ * makes the boot service and a later `ls` disagree, so `reconcile` marks a live
+ * connector `stopped` and it shows `down` forever. */
+function darwinBootId(): string | undefined {
+  const sysctl = (name: string): string =>
+    execFileSync("/usr/sbin/sysctl", ["-n", name], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  try {
+    const uuid = sysctl("kern.bootsessionuuid");
+    if (uuid) return `darwin-${uuid}`;
+  } catch { /* older macOS without the key */ }
+  try {
+    const sec = /sec\s*=\s*(\d+)/.exec(sysctl("kern.boottime"))?.[1];
+    if (sec) return `darwin-boot-${sec}`;
+  } catch { /* fall through */ }
+  return undefined;
+}
+
 /** Stable per-boot id so a pid reused after a reboot is never mistaken for ours.
- * On systems without the Linux boot_id file (e.g. macOS), fall back to the boot
- * *time* bucketed to the minute — this is constant between invocations (unlike
- * `os.uptime()`, which increases every second and would break connector tracking). */
+ * On systems without the Linux boot_id file, macOS uses its boot session uuid;
+ * elsewhere fall back to the boot *time* bucketed to the minute — constant
+ * between invocations (unlike `os.uptime()`, which increases every second). */
 export function currentBootId(): string {
   try {
     return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
   } catch {
     if (process.platform === "darwin") {
-      try {
-        const out = execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8" }).trim();
-        return `darwin-${out}-${os.hostname()}`;
-      } catch { /* fallback */ }
+      const id = darwinBootId();
+      if (id) return id;
     }
     const bootMinute = Math.floor((Date.now() - os.uptime() * 1000) / 60_000);
     return `boot-${bootMinute}-${os.hostname()}`;

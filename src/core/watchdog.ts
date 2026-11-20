@@ -3,7 +3,7 @@ import type { Cf } from "../cloudflare/client.js";
 import { getTunnel } from "../cloudflare/tunnels.js";
 import { checkLocalReady, extractMetricsPort } from "../connector/health.js";
 import { pickFreePort, startConnector, stopConnector } from "../connector/process.js";
-import { currentBootId, markConnectorRunning } from "../connector/registry.js";
+import { currentBootId, getEntry, markConnectorRunning } from "../connector/registry.js";
 import { createTunnelSubdomain, type CreateOptions } from "./orchestrator-create.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
@@ -102,6 +102,20 @@ async function launchConnector(ctx: WatchdogContext): Promise<void> {
   });
 }
 
+/** The supervisor is the source of truth for its own connector. Another process
+ * (`ls` → `reconcile`) may have marked the entry `stopped` — e.g. a registry
+ * written before a boot-id fix, or a boot-id mismatch — and nothing else would
+ * ever flip it back while the connector stays healthy. Re-record it on drift
+ * only, so a healthy tick normally costs one registry read and no lock. */
+async function reassertRunning(ctx: WatchdogContext): Promise<void> {
+  const e = getEntry(ctx.fqdn);
+  if (!e) return; // released (`delete`) — don't resurrect the entry
+  if (e.state === "running" && e.pid === ctx.pid && e.bootId === currentBootId()) return;
+  await markConnectorRunning(ctx.fqdn, {
+    pid: ctx.pid, metricsPort: ctx.metricsPort, bootId: currentBootId(), tunnelId: ctx.tunnelId,
+  });
+}
+
 async function tier1Restart(ctx: WatchdogContext, state: WatchdogState): Promise<void> {
   state.lastRestartAt = Date.now();
   state.tier1Restarts++;
@@ -182,6 +196,7 @@ export function startTunnelWatchdog(ctx: WatchdogContext, opts: WatchdogOptions 
       // Healthy again: earlier restarts shouldn't push a later blip to Tier 2.
       state.consecutiveFailures = 0;
       state.tier1Restarts = 0;
+      await reassertRunning(ctx).catch((err: unknown) => say.debug(`[watchdog] registry re-assert failed: ${(err as Error).message}`));
       return;
     }
     state.consecutiveFailures++;

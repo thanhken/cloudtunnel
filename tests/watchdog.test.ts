@@ -15,7 +15,7 @@ vi.mock("../src/connector/process.js", () => ({
 vi.mock("../src/connector/registry.js", () => ({
   currentBootId: vi.fn(() => "mock-boot-id"),
   markConnectorRunning: vi.fn(async () => {}),
-  getEntry: vi.fn(() => ({ pid: 9999, bootId: "mock-boot-id", metricsPort: 20244 })),
+  getEntry: vi.fn(() => ({ state: "running", pid: 9999, bootId: "mock-boot-id", metricsPort: 20244 })),
 }));
 
 vi.mock("../src/cloudflare/tunnels.js", () => ({
@@ -67,6 +67,47 @@ describe("watchdog", () => {
     const state = getWatchdogState("api.abc.com");
     expect(state?.consecutiveFailures).toBe(0);
     expect(state?.tier1Restarts).toBe(0);
+  });
+
+  const healthyCtx = (): WatchdogContext => ({
+    cf: { token: "tok", accountId: "acc" }, bin: "cloudflared", fqdn: "api.abc.com", tunnelId: "mock-tunnel",
+    token: "mock-token", logFile: "/tmp/mock.log", metricsPort: 20244, pid: 9999,
+    item: { port: 8080, proto: "http", zone: "abc.com" },
+  });
+
+  it("healthy + registry in sync: does not rewrite the registry", async () => {
+    const { startTunnelWatchdog } = await import("../src/core/watchdog.js");
+    const { checkLocalReady } = await import("../src/connector/health.js");
+    const { markConnectorRunning } = await import("../src/connector/registry.js");
+    vi.mocked(checkLocalReady).mockResolvedValue({ healthy: true, readyConnections: 4 });
+
+    startTunnelWatchdog(healthyCtx(), { intervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(markConnectorRunning).not.toHaveBeenCalled();
+  });
+
+  it("healthy but registry marked stopped by another process: re-asserts running", async () => {
+    const { startTunnelWatchdog } = await import("../src/core/watchdog.js");
+    const { checkLocalReady } = await import("../src/connector/health.js");
+    const { getEntry, markConnectorRunning } = await import("../src/connector/registry.js");
+    vi.mocked(checkLocalReady).mockResolvedValue({ healthy: true, readyConnections: 4 });
+    vi.mocked(getEntry).mockReturnValueOnce({ state: "stopped", metricsPort: 20244 } as never);
+
+    startTunnelWatchdog(healthyCtx(), { intervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(markConnectorRunning).toHaveBeenCalledWith("api.abc.com", expect.objectContaining({ pid: 9999, bootId: "mock-boot-id" }));
+  });
+
+  it("healthy but entry was released: does not resurrect it", async () => {
+    const { startTunnelWatchdog } = await import("../src/core/watchdog.js");
+    const { checkLocalReady } = await import("../src/connector/health.js");
+    const { getEntry, markConnectorRunning } = await import("../src/connector/registry.js");
+    vi.mocked(checkLocalReady).mockResolvedValue({ healthy: true, readyConnections: 4 });
+    vi.mocked(getEntry).mockReturnValueOnce(undefined);
+
+    startTunnelWatchdog(healthyCtx(), { intervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(markConnectorRunning).not.toHaveBeenCalled();
   });
 
   it("triggers Tier 1 restart after 3 consecutive failures", async () => {

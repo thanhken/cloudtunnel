@@ -253,3 +253,29 @@ describe("currentBootId", () => {
     expect(id.length).toBeGreaterThan(0);
   });
 });
+
+describe("currentBootId on macOS", () => {
+  it("uses kern.bootsessionuuid and never the hostname (which changes with the network)", async () => {
+    vi.resetModules();
+    vi.doMock("node:fs", async (orig) => ({
+      ...(await orig<typeof import("node:fs")>()),
+      readFileSync: vi.fn(() => { throw new Error("ENOENT"); }),
+    }));
+    vi.doMock("node:child_process", async (orig) => ({
+      ...(await orig<typeof import("node:child_process")>()),
+      execFileSync: vi.fn((_bin: string, args: string[]) =>
+        args[1] === "kern.bootsessionuuid" ? "ABCD-1234\n" : "{ sec = 1700000000, usec = 42 } Mon\n"),
+    }));
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    try {
+      const { currentBootId } = await import("../src/connector/registry.js");
+      expect(currentBootId()).toBe("darwin-ABCD-1234");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      vi.doUnmock("node:fs");
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  });
+});
