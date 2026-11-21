@@ -43,12 +43,11 @@ describe("definition round-trip", () => {
 });
 
 describe("parseServiceArgv", () => {
-  it("parses up/relay argv and ignores anything else", () => {
+  it("parses up argv and ignores anything else", () => {
     expect(parseServiceArgv(desc.argv)).toEqual({
       subdomain: "n8n", port: 5678, host: undefined, zone: "iamken.work", proto: "http", protocol: "http2",
     });
-    expect(parseServiceArgv(["relay", "cfapi", "-d", "abc.com", "--keep-alive"]))
-      .toMatchObject({ command: "relay", subdomain: "cfapi", zone: "abc.com" });
+    expect(parseServiceArgv(["relay", "cfapi", "-d", "abc.com", "--keep-alive"])).toBeUndefined();
     expect(parseServiceArgv(["up", "--profile", "old"])).toBeUndefined();
     expect(parseServiceArgv(["up", "8080", "-d", "abc.com"])).toBeUndefined(); // no concrete subdomain
   });

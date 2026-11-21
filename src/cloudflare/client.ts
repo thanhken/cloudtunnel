@@ -1,9 +1,9 @@
 import { CliError, fetchErrorReason } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { getCredentials } from "../config/store.js";
-import { getApiBase, DEFAULT_API_BASE } from "../config/api-base.js";
-import { RELAY_SECRET_HEADER, getRelaySecret } from "../config/relay-secret.js";
 
+/** Cloudflare management API base — no trailing slash (paths start with `/`). */
+export const CF_API_BASE = "https://api.cloudflare.com/client/v4";
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 4;
 /** Hard cap per attempt (connect + headers + body). Without it a half-open
@@ -48,20 +48,16 @@ export async function cfRequest<T>(
   path: string,
   body?: unknown,
 ): Promise<CfEnvelope<T>> {
-  const base = getApiBase();
-  const viaRelay = base !== DEFAULT_API_BASE;
-  const secret = getRelaySecret();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
-  if (secret && viaRelay) headers[RELAY_SECRET_HEADER] = secret;
   for (let attempt = 0; ; attempt++) {
     let res: Response;
-    let env: CfEnvelope<T> & { error?: string };
+    let env: CfEnvelope<T>;
     const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     try {
-      res = await fetch(`${base}${path}`, {
+      res = await fetch(`${CF_API_BASE}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -70,31 +66,23 @@ export async function cfRequest<T>(
       env = (await res.json().catch((err: unknown) => {
         if (signal.aborted) throw err; // body stalled past the timeout → network error
         return {};
-      })) as CfEnvelope<T> & { error?: string };
+      })) as CfEnvelope<T>;
     } catch (err) {
       const reason = signal.aborted ? "timeout" : fetchErrorReason(err);
-      say.debug(`[cf] ${method} ${base}${path} -> network error: ${reason}${viaRelay ? " (relay)" : ""}`);
+      say.debug(`[cf] ${method} ${CF_API_BASE}${path} -> network error: ${reason}`);
       if (attempt < MAX_ATTEMPTS) {
         await sleep(2 ** attempt * 500);
         continue;
       }
-      throw new CliError(`Could not reach the Cloudflare API (${reason})${viaRelay ? ` via relay ${base}` : ""}.`, {
-        hint: viaRelay ? "is the relay tunnel up and the base URL correct? run with CLOUDTUNNEL_DEBUG=1" : undefined,
-      });
+      throw new CliError(`Could not reach the Cloudflare API (${reason}).`);
     }
-    say.debug(`[cf] ${method} ${base}${path} -> ${res.status}${viaRelay ? " (relay)" : ""}`);
+    say.debug(`[cf] ${method} ${CF_API_BASE}${path} -> ${res.status}`);
     if (RETRYABLE.has(res.status) && attempt < MAX_ATTEMPTS) {
       const retryAfter = Number(res.headers.get("retry-after")) || 0;
       await sleep(retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 500);
       continue;
     }
     if (!res.ok || !env.success) {
-      if (viaRelay && env.error && !env.errors) {
-        throw new CliError(`Relay rejected the request (${res.status}): ${env.error}.`, {
-          status: res.status,
-          hint: res.status === 403 ? "does CLOUDTUNNEL_RELAY_SECRET match the relay's secret?" : `relay base: ${base}`,
-        });
-      }
       const msg = env.errors?.[0]?.message ?? `HTTP ${res.status}`;
       throw new CliError(`Cloudflare API error: ${msg}`, { status: res.status });
     }

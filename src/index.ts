@@ -10,7 +10,6 @@ import { registerUp } from "./commands/up.js";
 import { registerLs } from "./commands/ls.js";
 import { registerDelete } from "./commands/delete.js";
 import { registerLogs } from "./commands/logs.js";
-import { registerRelay } from "./commands/relay.js";
 import { registerService } from "./commands/service.js";
 import { maybeRepairServicesAfterUpgrade } from "./core/service-upgrade-check.js";
 
@@ -37,7 +36,7 @@ function buildProgram(): Command {
     ].join("\n"),
   );
 
-  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerRelay, registerService]) {
+  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerService]) {
     register(program);
   }
   return program;

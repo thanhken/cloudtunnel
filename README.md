@@ -68,7 +68,6 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 | `ls` · `ps` | List tunnels — `# · URL · TARGET · PROTOCOL · STATE · SERVICE · PID`. `--all` scans the whole account. |
 | `delete <target…>` | Release tunnel(s) — connector + tunnel + DNS + boot service. `--all`, `--dry-run`, `-f`. |
 | `logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
-| `relay [sub]` | Expose a locked Cloudflare-API proxy — manage tunnels from behind a CF-API block (see below). |
 | `service repair` | Regenerate + restart boot services that are outdated, broken, stopped, or duplicated. `-y`, `--dry-run`. |
 
 A **`<target>`** is a `#` number, a subdomain, a full hostname/URL, or a tunnel-id prefix. `ls --all` also numbers tunnels created elsewhere (or leaked by a failed run); pair with `-f` when they aren't cloudtunnel-managed.
@@ -97,26 +96,6 @@ Each is just a flag or subcommand away:
 - **Self-healing upgrades** — after `npm i -g` a running service restarts itself onto the new version (Linux/macOS). The first interactive command after an upgrade finds boot services written by an older version (or broken, stopped, duplicated) and offers to repair them in one go; `ls` flags them as `(stale)` / `(broken)` / `(dead)` / `(duplicate)`. Run `cloudtunnel service repair` any time.
 - **Background** — `--detach` keeps connectors running after the CLI exits. Release with `delete <target>`, tail with `logs <target> -f`.
 - **Behind a proxy** — auto-routes `fetch` through `HTTPS_PROXY`/`HTTP_PROXY` (and, on Linux/GNOME, the system proxy). Set `HTTPS_PROXY` once if needed.
-
----
-
-## Relay: blocked Cloudflare API
-
-Some networks block `api.cloudflare.com` (used to create tunnels + DNS) but leave `*.your-domain.com` reachable. Run a **relay** on a host that _can_ reach the API, then point the blocked client at it — every `login`/`up`/`ls`/`delete` rides a data-plane tunnel instead of hitting the API directly.
-
-```bash
-# On the relay host (API reachable):
-cloudtunnel relay cfapi -d you.com            # → https://cfapi.you.com + prints a relay key
-                                              #   add --detach / --service to run in background / on boot
-
-# On the blocked client:
-cloudtunnel login --relay ctr_XXXXXXXX…       # paste the key + mint a CF token when asked
-cloudtunnel up web:8080 -d you.com            # now manages tunnels through the relay
-```
-
-The proxy forwards to `api.cloudflare.com` only (no open-proxy / SSRF) and returns `403` to any request missing the shared secret.
-
-**Security:** the relay terminates the tunnel and sees the client's CF token in **plaintext** — only relay through a host **you control**, with a least-privilege token (the four scopes in [Authentication](#authentication)). Env/flag alternatives (`CLOUDTUNNEL_API_BASE`, `CLOUDTUNNEL_RELAY_SECRET`) and `CLOUDTUNNEL_DEBUG=1` request tracing are also supported.
 
 ---
 
@@ -152,6 +131,7 @@ Provide the token via (highest precedence first): `CLOUDFLARE_API_TOKEN` env →
 | **`delete` says "active connections"** | Handled automatically — cloudtunnel cleans up the connections and retries. |
 | **"grey-clouded" error** | cfargotunnel routing needs an orange-cloud (proxied) CNAME. |
 | **A DNS record already occupies the name** | Pick another subdomain/domain, or pass `-f/--force` to replace a non-tunnel record. |
+| **Cloudflare API errors / timeouts** | Re-run with `CLOUDTUNNEL_DEBUG=1` to trace every API request and its status. |
 
 ---
 

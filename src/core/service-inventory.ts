@@ -39,16 +39,13 @@ function flagValue(argv: string[], flag: string): string | undefined {
 }
 
 /** Recover the service parameters from the cloudtunnel argv a definition
- * re-runs (`up <spec> -d <zone> …` or `relay <sub> -d <zone> …`). Undefined for
+ * re-runs (`up <spec> -d <zone> …`). Undefined for
  * anything else (e.g. legacy profile units), which is then left untouched. */
 export function parseServiceArgv(argv: string[]): ServiceSpecParams | undefined {
   const zone = flagValue(argv, "-d");
   if (!zone) return undefined;
   const proto = flagValue(argv, "--proto") === "https" ? "https" : "http";
   try {
-    if (argv[0] === "relay" && argv[1]) {
-      return { command: "relay", subdomain: argv[1], port: 0, zone, proto };
-    }
     if (argv[0] === "up" && argv[1]) {
       const spec = parseTunnelSpec(argv[1]);
       if (spec.subdomain === undefined) return undefined;

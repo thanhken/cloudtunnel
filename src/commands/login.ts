@@ -6,8 +6,6 @@ import { configFile } from "../config/paths.js";
 import { loadConfig, saveConfig, type CloudtunnelConfig } from "../config/store.js";
 import { REQUIRED_SCOPES, openBrowser, tokenCreateUrl } from "../config/token-url.js";
 import { listAccounts, listZones } from "../config/resolve-identity.js";
-import { getApiBase, isHttpUrl } from "../config/api-base.js";
-import { decodeRelayKey } from "../config/relay-key.js";
 
 interface LoginOptions {
   tokenStdin?: boolean;
@@ -15,9 +13,6 @@ interface LoginOptions {
   account?: string;
   zone?: string;
   status?: boolean;
-  apiBase?: string; // point the CF API at a relay (blocked control plane)
-  relaySecretStdin?: boolean; // read the relay shared secret from stdin
-  relay?: string; // one-shot relay key (base+secret) from `cloudtunnel relay`
 }
 
 /** Read the whole stdin pipe (for `--token-stdin`). */
@@ -65,35 +60,6 @@ async function acquireToken(opts: LoginOptions): Promise<{ token: string; fromEn
 }
 
 async function runLoginFlow(opts: LoginOptions = {}): Promise<void> {
-  let relaySecretInput: string | undefined;
-  // A relay key bundles base+secret into one flag → the simplest client setup
-  // (`login --relay <key>`); no env exports, no double stdin.
-  if (opts.relay) {
-    const decoded = decodeRelayKey(opts.relay);
-    opts.apiBase = decoded.base;
-    relaySecretInput = decoded.secret;
-  }
-  if (opts.apiBase && !isHttpUrl(opts.apiBase)) {
-    throw new CliError(`Invalid --api-base "${opts.apiBase}".`, {
-      hint: "must be an http(s) URL, e.g. https://cfapi.example.com/client/v4",
-    });
-  }
-  if (opts.tokenStdin && opts.relaySecretStdin) {
-    throw new CliError("Can't read both the token and the relay secret from stdin.", {
-      hint: "run login twice, or set one via env (CLOUDFLARE_API_TOKEN / CLOUDTUNNEL_RELAY_SECRET)",
-    });
-  }
-  // Apply relay overrides to THIS process BEFORE the verify calls: on a blocked
-  // client the login-time listAccounts/listZones must also ride the relay, and
-  // config isn't saved yet — so seed the env the transport reads from.
-  if (opts.apiBase) process.env.CLOUDTUNNEL_API_BASE = opts.apiBase;
-  if (relaySecretInput) {
-    process.env.CLOUDTUNNEL_RELAY_SECRET = relaySecretInput;
-  } else if (opts.relaySecretStdin) {
-    relaySecretInput = await readStdin();
-    if (relaySecretInput) process.env.CLOUDTUNNEL_RELAY_SECRET = relaySecretInput;
-  }
-
   if (process.stdout.isTTY) clack.intro("cloudtunnel · connect to Cloudflare");
   const { token, fromEnv } = await acquireToken(opts);
 
@@ -122,11 +88,9 @@ async function runLoginFlow(opts: LoginOptions = {}): Promise<void> {
     }
   }
 
-  // MERGE-save: preserve apiBase/relaySecret/defaultZone across re-logins (a plain
-  // replace here would wipe a previously-configured relay base or secret).
+  // MERGE-save: preserve defaultZone (and other saved fields) across re-logins.
   saveConfig(buildMergedConfig(loadConfig(), {
     token, fromEnv, accountId: account.id, defaultZone,
-    apiBase: opts.apiBase, relaySecret: relaySecretInput,
   }));
   const summary = `Logged in as ${account.name}${defaultZone ? ` · default domain ${defaultZone}` : ""}`;
   if (process.stdout.isTTY) clack.outro(summary);
@@ -135,19 +99,17 @@ async function runLoginFlow(opts: LoginOptions = {}): Promise<void> {
 }
 
 /** Merge fresh login results onto the existing config so a re-login never wipes a
- * previously-set relay base/secret or saved default domain. An env-sourced token
+ * previously-saved default domain. An env-sourced token
  * is not persisted (env stays the source of truth). Pure → unit-tested. */
 export function buildMergedConfig(
   prev: CloudtunnelConfig,
-  args: { token: string; fromEnv: boolean; accountId: string; defaultZone?: string; apiBase?: string; relaySecret?: string },
+  args: { token: string; fromEnv: boolean; accountId: string; defaultZone?: string },
 ): CloudtunnelConfig {
   return {
     ...prev,
     apiToken: args.fromEnv ? undefined : args.token,
     accountId: args.accountId,
     defaultZone: args.defaultZone ?? prev.defaultZone,
-    apiBase: args.apiBase ?? prev.apiBase,
-    relaySecret: args.relaySecret ?? prev.relaySecret,
   };
 }
 
@@ -162,10 +124,6 @@ function showStatus(): void {
   say.info(`Token:   ${redactToken(token)} (${source})`);
   say.info(`Account: ${config.accountId ?? "(from env / unresolved)"}`);
   say.info(`Domain:  ${config.defaultZone ?? "(none)"}`);
-  const baseSrc = process.env.CLOUDTUNNEL_API_BASE ? "env" : config.apiBase ? "config" : "default";
-  say.info(`Base:    ${getApiBase()} (${baseSrc})`);
-  const secretSrc = process.env.CLOUDTUNNEL_RELAY_SECRET ? "env" : config.relaySecret ? "config" : undefined;
-  say.info(`Relay secret: ${secretSrc ? `set (${secretSrc})` : "(none)"}`);
   say.dim(`Config:  ${configFile}`);
 }
 
@@ -177,9 +135,6 @@ export function registerLogin(program: Command): void {
     .option("--token <token>", "[discouraged] token as an argument (leaks into shell history)")
     .option("--account <id>", "Cloudflare account id (auto-resolved when you have one account)")
     .option("--zone <domain>", "default domain for new tunnels (auto-resolved when you have one)")
-    .option("--relay <key>", "one-shot relay setup: paste the key printed by `cloudtunnel relay` (sets base + secret)")
-    .option("--api-base <url>", "route the CF API through a relay (when api.cloudflare.com is blocked)")
-    .option("--relay-secret-stdin", "read the relay shared secret from stdin (pairs with --api-base)")
     .option("--status", "show current identity (redacted) and exit")
     .action(async (opts: LoginOptions) => {
       if (opts.status) return showStatus();
