@@ -21,7 +21,7 @@ interface CfEnvelope<T> {
   success: boolean;
   result: T;
   result_info?: { page: number; total_pages?: number; per_page: number; count: number };
-  errors?: { message: string }[];
+  errors?: { message: string; code?: number }[];
 }
 
 /** Token + account id required for tunnel ops. Throws actionably if unresolved. */
@@ -47,7 +47,12 @@ export async function cfRequest<T>(
   method: string,
   path: string,
   body?: unknown,
+  opts: { retry?: boolean } = {},
 ): Promise<CfEnvelope<T>> {
+  // `retry: false` for non-idempotent writes: after a timeout / 5xx the
+  // request may have been applied, so the caller must look before re-sending.
+  // 429 is still retried (rejected before processing).
+  const retry = opts.retry !== false;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -70,21 +75,21 @@ export async function cfRequest<T>(
     } catch (err) {
       const reason = signal.aborted ? "timeout" : fetchErrorReason(err);
       say.debug(`[cf] ${method} ${CF_API_BASE}${path} -> network error: ${reason}`);
-      if (attempt < MAX_ATTEMPTS) {
+      if (retry && attempt < MAX_ATTEMPTS) {
         await sleep(2 ** attempt * 500);
         continue;
       }
       throw new CliError(`Could not reach the Cloudflare API (${reason}).`);
     }
     say.debug(`[cf] ${method} ${CF_API_BASE}${path} -> ${res.status}`);
-    if (RETRYABLE.has(res.status) && attempt < MAX_ATTEMPTS) {
+    if (RETRYABLE.has(res.status) && (retry || res.status === 429) && attempt < MAX_ATTEMPTS) {
       const retryAfter = Number(res.headers.get("retry-after")) || 0;
       await sleep(retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 500);
       continue;
     }
     if (!res.ok || !env.success) {
       const msg = env.errors?.[0]?.message ?? `HTTP ${res.status}`;
-      throw new CliError(`Cloudflare API error: ${msg}`, { status: res.status });
+      throw new CliError(`Cloudflare API error: ${msg}`, { status: res.status, cfCode: env.errors?.[0]?.code });
     }
     return env;
   }

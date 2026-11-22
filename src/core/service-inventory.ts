@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { parseProtect } from "./protect-spec.js";
 import { parseTunnelSpec } from "./tunnel-spec.js";
 import { parseTransportProtocol } from "./transport-protocol.js";
 import { fqdnFor, SERVICE_SCHEMA, type InstalledDefinition, type ServiceSpecParams } from "./service-exec.js";
@@ -50,9 +51,13 @@ export function parseServiceArgv(argv: string[]): ServiceSpecParams | undefined 
       const spec = parseTunnelSpec(argv[1]);
       if (spec.subdomain === undefined) return undefined;
       const protocolFlag = flagValue(argv, "--protocol");
+      // An unparseable --protect throws → the unit is left untouched, never
+      // regenerated without its protection.
+      const protectFlag = argv.includes("--protect") ? flagValue(argv, "--protect") ?? "" : undefined;
       return {
         subdomain: spec.subdomain, port: spec.port, host: spec.host, zone, proto,
         protocol: protocolFlag ? parseTransportProtocol(protocolFlag) : undefined,
+        ...(protectFlag !== undefined ? { protect: parseProtect(protectFlag) } : {}),
       };
     }
   } catch {

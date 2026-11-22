@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { WatchdogContext } from "../src/core/watchdog.js";
 
+vi.mock("../src/core/access-protection.js", () => ({ ensureAccessApp: vi.fn(), removeAccessApp: vi.fn(async () => true) }));
 vi.mock("../src/connector/health.js", () => ({
   checkLocalReady: vi.fn(),
   extractMetricsPort: vi.fn(),

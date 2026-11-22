@@ -3,6 +3,7 @@
  * public entry, so the `createdBy` marker can't be spoofed by API users.
  */
 import { ensureProxyConfigured } from "../config/proxy.js";
+import { parseProtect } from "../core/protect-spec.js";
 import { getCredentials } from "../config/store.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { ensureCloudflared } from "../connector/binary.js";
@@ -30,6 +31,10 @@ export interface UpOptions {
   detach?: boolean;
   /** Take over a hostname that already has a tunnel (default: refuse). */
   replace?: boolean;
+  /** Require an email one-time PIN (Cloudflare Access) for these emails /
+   * `@domains`. Needs the token's Access scopes. Never auto-adds the PIN login
+   * method to an account that already has other login methods. */
+  protect?: string[];
   /** Progress lines ("Creating api (:3000)…"). */
   log?: (line: string) => void;
   /** A connector exited on its own (the tunnel is down; call `release()`). */
@@ -66,6 +71,7 @@ export async function createSession(
   const parsed = list.map(parseTunnelSpec);
   const ttlMs = opts.ttl !== undefined ? parseTtl(opts.ttl) : undefined;
   const protocol = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
+  const protect = opts.protect?.length ? parseProtect(opts.protect) : undefined;
 
   const client = cf();
   const creds = getCredentials();
@@ -75,7 +81,7 @@ export async function createSession(
 
   const items: CreateOptions[] = parsed.map((s) => ({
     port: s.port, proto: opts.proto ?? "http", name: s.subdomain, zone: domain, host: s.host,
-    defaultZone: creds.defaultZone, interactive: false, replace: !!opts.replace, yes: true,
+    defaultZone: creds.defaultZone, interactive: false, replace: !!opts.replace, yes: true, protect,
   }));
 
   // Holder, not a `const session`: a connector can exit while provisioning is

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+vi.mock("../src/core/access-protection.js", () => ({ ensureAccessApp: vi.fn(), removeAccessApp: vi.fn(async () => true) }));
 vi.mock("../src/cloudflare/tunnels.js", () => ({
   createTunnel: vi.fn(async () => ({ id: "new-tunnel", name: "ct-api-0001" })),
   deleteTunnel: vi.fn(),

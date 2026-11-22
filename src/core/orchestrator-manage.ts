@@ -1,4 +1,5 @@
 import type { Cf } from "../cloudflare/client.js";
+import { removeAccessApp } from "./access-protection.js";
 import { resolveZone } from "../cloudflare/zones.js";
 import { deleteTunnelWithConnections, getTunnel, isManagedTunnel, listTunnels } from "../cloudflare/tunnels.js";
 import { deleteDnsRecord, findCname, isManagedDns } from "../cloudflare/dns.js";
@@ -71,7 +72,8 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
   }
 
   if (opts.dryRun) {
-    say.info(`Would release: tunnel ${tunnelId ?? "(none)"}${record ? `, DNS ${record.id}` : ""}`);
+    const app = entry?.accessAppId ? `, Access app ${entry.accessAppId}` : "";
+    say.info(`Would release: tunnel ${tunnelId ?? "(none)"}${record ? `, DNS ${record.id}` : ""}${app}`);
     return;
   }
 
@@ -101,6 +103,10 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
       if (!isNotFound(err)) throw err;
     }
   }
+  // Last, and never blocking: the hostname no longer resolves to anything, so
+  // a leftover Access app only costs a dashboard entry.
+  if (entry?.accessAppId || entry?.protectedFor) await removeAccessApp(cf, fqdn, entry.accessAppId);
+  else if (!entry) await removeAccessApp(cf, fqdn, undefined, { quietIfForbidden: true });
   await removeEntry(fqdn);
   if (!opts.quiet) say.ok(`Released ${fqdn}`);
 }

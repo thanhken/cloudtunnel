@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { CliError } from "../src/ui/errors.js";
 import type { Cf } from "../src/cloudflare/client.js";
 
+vi.mock("../src/core/access-protection.js", () => ({ ensureAccessApp: vi.fn(), removeAccessApp: vi.fn(async () => true) }));
 vi.mock("../src/cloudflare/tunnels.js", () => ({
   listTunnels: vi.fn(),
   getTunnel: vi.fn(),

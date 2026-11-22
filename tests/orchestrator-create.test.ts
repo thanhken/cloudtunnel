@@ -22,6 +22,7 @@ afterEach(() => {
 });
 
 // Mock modules at the top level
+vi.mock("../src/core/access-protection.js", () => ({ ensureAccessApp: vi.fn(), removeAccessApp: vi.fn(async () => true) }));
 vi.mock("../src/cloudflare/tunnels.js", () => ({
   createTunnel: vi.fn(),
   deleteTunnel: vi.fn(),

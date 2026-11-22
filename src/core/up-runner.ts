@@ -118,6 +118,7 @@ export async function startTunnels(
     const lines = started.map((s) => `${formatRoute(s.fqdn, s.target)}  ${dim(`pid ${s.pid}`)}`);
     note(lines.join("\n"), "running in background");
     if (session.expiresAt) say.dim(`Auto-release in ${formatRemaining(opts.ttlMs!)}.`);
+    sayProtected(items);
     if (process.stdout.isTTY) outro("Stop with: cloudtunnel delete <#|--all>");
     return started.map((t) => t.fqdn);
   }
@@ -133,7 +134,14 @@ export async function startTunnels(
   note(lines.join("\n"), `${live}/${started.length} live`);
   say.dim(opts.keepAlive ? "Service running with auto-heal watchdog." : "Ctrl-C stops and releases them.");
   if (opts.ttlMs) say.dim(`Auto-release in ${formatRemaining(opts.ttlMs)}.`);
+  sayProtected(items);
   return started.map((t) => t.fqdn);
+}
+
+/** Who can open a `--protect` tunnel (every item shares the same rules). */
+function sayProtected(items: CreateOptions[]): void {
+  const rules = items.find((i) => i.protect?.length)?.protect;
+  if (rules) say.dim(`Protected: visitors must enter a one-time PIN sent to ${rules.join(", ")}.`);
 }
 
 /** A supervised run notices an `npm i -g` upgrade and exits so its boot service

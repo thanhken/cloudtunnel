@@ -78,7 +78,7 @@ export function createToolHandlers(deps: ToolDeps) {
   return {
     async tunnel_up(args: {
       port: number; subdomain?: string; host?: string; domain?: string;
-      proto?: "http" | "https"; ttl?: string; replace?: boolean;
+      proto?: "http" | "https"; ttl?: string; replace?: boolean; protect?: string[];
     }): Promise<ToolResult> {
       if (closing) return fail(new CliError("The MCP server is shutting down."));
       const run = (async () => {
@@ -89,7 +89,7 @@ export function createToolHandlers(deps: ToolDeps) {
         // Policy runs on what the spec actually parses to, not on raw args.
         await assertForwardHostAllowed(parseTunnelSpec(spec).host, deps.env, deps.lookup);
         const session = await deps.up(spec, {
-          domain: args.domain, proto: args.proto, ttl: args.ttl, replace: args.replace === true,
+          domain: args.domain, proto: args.proto, ttl: args.ttl, replace: args.replace === true, protect: args.protect,
         });
         for (const t of session.tunnels) sessions.set(t.fqdn, session);
         return session;

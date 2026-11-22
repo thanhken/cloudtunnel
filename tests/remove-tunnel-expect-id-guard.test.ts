@@ -6,6 +6,7 @@ import { join } from "node:path";
 // removeTunnelSubdomain's expectTunnelId gate: an automatic release (orphan / TTL
 // reap) must refuse to delete when the hostname now serves a different tunnel.
 
+vi.mock("../src/core/access-protection.js", () => ({ ensureAccessApp: vi.fn(), removeAccessApp: vi.fn(async () => true) }));
 vi.mock("../src/cloudflare/tunnels.js", () => ({
   listTunnels: vi.fn(async () => []),
   getTunnel: vi.fn(async (_cf: unknown, id: string) => ({ id, name: `ct-${id}` })),

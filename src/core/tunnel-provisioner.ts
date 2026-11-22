@@ -72,6 +72,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * (e.g. the same service mid-restart) to let go. */
 const LOCK_WAIT_MS = 30_000;
 const MAX_CREATE_BACKOFF_MS = 60_000;
+/** Retry interval for a rejected / under-scoped token: it needs a human, so
+ * retry rarely (not exit — the supervisor would restart it every few seconds
+ * and burn the API rate limit) and recover on its own once the token is fixed. */
+const AUTH_RETRY_MS = 10 * 60_000;
 
 const logFileFor = (fqdn: string): string => join(logDir, `${serviceSlug(fqdn)}.log`);
 
@@ -98,8 +102,10 @@ async function createWithBootRetry(
     try {
       return await createTunnelSubdomain(cf, { ...item, reuse: true });
     } catch (err) {
-      const wait = Math.min(2 ** attempt * 1000, MAX_CREATE_BACKOFF_MS);
-      say.warn(`Could not create ${item.name ?? "tunnel"} (${(err as Error).message}) — retrying in ${wait / 1000}s`);
+      const authError = err instanceof CliError && (err.status === 401 || err.status === 403);
+      const wait = authError ? AUTH_RETRY_MS : Math.min(2 ** attempt * 1000, MAX_CREATE_BACKOFF_MS);
+      const hint = authError && (err as CliError).hint ? ` — ${(err as CliError).hint}` : "";
+      say.warn(`Could not create ${item.name ?? "tunnel"} (${(err as Error).message}${hint}) — retrying in ${wait / 1000}s`);
       // Abortable: `systemctl stop` during an offline boot must not hang ~60s.
       try { await abortableSleep(wait, undefined, { signal }); }
       catch { throwIfAborted(signal); }

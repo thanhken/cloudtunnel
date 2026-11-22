@@ -44,6 +44,9 @@ export interface ServiceSpecParams {
   zone: string;
   proto: "http" | "https";
   protocol?: TransportProtocol;
+  /** `--protect` rules (already validated: plain address characters only, so
+   * safe as one unquoted unit-file argument). */
+  protect?: string[];
 }
 
 /** Normalized, OS-agnostic description of the boot service for one subdomain. */
@@ -73,6 +76,7 @@ export function buildUpArgs(p: ServiceSpecParams): string[] {
     "up", spec, "-d", p.zone,
     ...(p.proto === "https" ? ["--proto", "https"] : []),
     "--protocol", proto,
+    ...(p.protect?.length ? ["--protect", p.protect.join(",")] : []),
     "--keep-alive",
     "-f", "-y",
   ];

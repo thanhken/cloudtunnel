@@ -42,7 +42,8 @@ export async function runMcpServer(version: string): Promise<void> {
     title: "Expose a local port",
     description: [
       "Expose a local port at a public HTTPS URL on the user's own Cloudflare domain (https://<subdomain>.<domain>).",
-      "The URL is PUBLIC — anyone with it can reach the service. Use `ttl` (e.g. \"1h\") for temporary sharing.",
+      "The URL is PUBLIC — anyone with it can reach the service — unless `protect` lists who may open it (they get an email one-time PIN). Use `ttl` (e.g. \"1h\") for temporary sharing.",
+      "Do NOT protect webhook receivers (Stripe, GitHub… can't log in).",
       "Good for webhooks (Stripe, GitHub…), previews and demos. Forwards to localhost only.",
       "Fails if the subdomain already has a tunnel unless `replace` is true — only replace when the user asked to.",
       LIFETIME_NOTE,
@@ -55,6 +56,8 @@ export async function runMcpServer(version: string): Promise<void> {
       proto: z.enum(["http", "https"]).optional().describe("Protocol of the LOCAL service (default http)"),
       ttl: z.string().optional().describe("Auto-release after e.g. '30m', '2h', '1d' (1m–30d)"),
       replace: z.boolean().optional().describe("Take over the subdomain if a tunnel already uses it"),
+      protect: z.array(z.string()).max(50).optional()
+        .describe("Only these emails / @domains may open the URL (email one-time PIN via Cloudflare Access), e.g. [\"alice@x.com\", \"@company.com\"]"),
       host: z.string().optional().describe(`Non-local forward target; disabled unless the user set ${ALLOW_REMOTE_HOST_ENV}=1`),
     }),
     annotations: { destructiveHint: false, openWorldHint: true },

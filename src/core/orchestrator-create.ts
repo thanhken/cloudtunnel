@@ -12,6 +12,7 @@ import {
   putIngress,
 } from "../cloudflare/tunnels.js";
 import { createCname, deleteDnsRecord, findDnsRecords } from "../cloudflare/dns.js";
+import { deleteAccessApp } from "../cloudflare/access.js";
 import type { DnsRecord } from "../cloudflare/types.js";
 import { buildIngress } from "./ingress.js";
 import { resolveHostSpec, type HostSpec } from "./slug.js";
@@ -20,6 +21,7 @@ import type { TunnelCreator } from "./tunnel-types.js";
 import { stopConnector } from "../connector/process.js";
 import { CliError } from "../ui/errors.js";
 import { confirm, isInteractive, say } from "../ui/output.js";
+import { applyProtection, type Protection } from "./hostname-protection.js";
 
 export interface CreateOptions {
   port: number;
@@ -45,16 +47,26 @@ export interface CreateOptions {
   owned?: boolean;
   createdBy?: TunnelCreator;
   expiresAt?: string;
+  /** `--protect`: allowed emails / @domains (validated by `parseProtect`). The
+   * hostname then requires an email one-time PIN via Cloudflare Access. */
+  protect?: string[];
 }
+
+/** What the Access step needs from a create. Never prompt mid-run (watchdog
+ * re-provision, warm restart) or under -y. */
+const protectionRequest = (opts: CreateOptions) => ({
+  protect: opts.protect,
+  interactive: opts.interactive !== false && !opts.reuse && !opts.yes && isInteractive(),
+});
 
 /** Every lifecycle field, always present (undefined when unset) so an upsert
  * overrides whatever an earlier tunnel on the same hostname left behind. */
-function lifecycleFields(opts: CreateOptions): Pick<RegistryEntry,
+function lifecycleFields(opts: CreateOptions, access: Protection = {}): Pick<RegistryEntry,
   "expiresAt" | "accessAppId" | "protectedFor" | "ownerPid" | "ownerBootId" | "createdBy"> {
   return {
     expiresAt: opts.expiresAt,
-    accessAppId: undefined,
-    protectedFor: undefined,
+    accessAppId: access.accessAppId,
+    protectedFor: access.protectedFor,
     ownerPid: opts.owned ? process.pid : undefined,
     ownerBootId: opts.owned ? currentBootId() : undefined,
     createdBy: opts.createdBy,
@@ -81,8 +93,10 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
   const zone = await resolveZone(cf.token, host.zone);
 
   const existingList = await findDnsRecords(cf.token, zone.id, host.hostname);
+  let access: Protection | undefined;
   if (opts.reuse) {
-    const reused = await tryReuseTunnel(cf, zone.id, host, opts, existingList);
+    access = await applyProtection(cf, host.hostname, protectionRequest(opts), getEntry(host.hostname));
+    const reused = await tryReuseTunnel(cf, zone.id, host, opts, existingList, access);
     if (reused) return reused;
   }
   if (existingList.length > 0) {
@@ -104,21 +118,24 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
         throw new CliError("Cancelled.", { exitCode: 130 });
       }
     }
-    const prev = getEntry(host.hostname);
+  }
+  // After the replace confirmation, before anything is torn down: a failure
+  // here (e.g. token without Access scopes) leaves the current tunnel intact.
+  const prev = getEntry(host.hostname);
+  access ??= await applyProtection(cf, host.hostname, protectionRequest(opts), prev);
+  try {
     if (prev) await stopConnector(prev);
-    for (const rec of existingList) {
-      await releaseHostname(cf, zone.id, rec);
-    }
-  } else {
-    const prev = getEntry(host.hostname);
-    if (prev) await stopConnector(prev);
+    for (const rec of existingList) await releaseHostname(cf, zone.id, rec);
+  } catch (err) {
+    if (access.createdAppId) await deleteAccessApp(cf, access.createdAppId).catch(() => {});
+    throw err;
   }
 
   // Track provisioning BEFORE creating anything irreversible; clear stale pid/metricsPort.
   await upsertEntry(host.hostname, {
     subdomain: host.subdomain, zone: host.zone, zoneId: zone.id,
     port: opts.port, proto: opts.proto, host: opts.host, state: "provisioning",
-    pid: undefined, metricsPort: undefined, ...lifecycleFields(opts),
+    pid: undefined, metricsPort: undefined, ...lifecycleFields(opts, access),
   });
 
   let tunnelId: string | undefined;
@@ -132,11 +149,18 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
     await putIngress(cf, tunnelId, buildIngress({ hostname: host.hostname, port: opts.port, proto: opts.proto, host: opts.host }));
     const record = await createCname(cf.token, zone.id, host.hostname, tunnelId);
     dnsRecordId = record.id;
-    await recordRunning(host, zone.id, tunnelId, dnsRecordId, opts);
+    await recordRunning(host, zone.id, tunnelId, dnsRecordId, opts, access);
     return { host, tunnelId, token };
   } catch (err) {
-    const clean = await rollback(cf, zone.id, tunnelId, dnsRecordId, host.hostname);
-    if (clean) await removeEntry(host.hostname);
+    let clean = await rollback(cf, zone.id, tunnelId, dnsRecordId, host.hostname);
+    if (access.createdAppId) {
+      try { await deleteAccessApp(cf, access.createdAppId); }
+      catch { clean = false; say.warn(`Left the Access app for ${host.hostname} behind (${access.createdAppId}).`); }
+    }
+    // An app this run adopted (not created) stays: keep it tracked on an
+    // orphaned entry so the next `up` / `delete` reaps it instead of losing it.
+    const keepsApp = !!access.accessAppId && !access.createdAppId;
+    if (clean && !keepsApp) await removeEntry(host.hostname);
     else await patchEntry(host.hostname, { state: "orphaned" });
     throw err;
   }
@@ -152,7 +176,7 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
  * retries instead of tearing the hostname down.
  */
 async function tryReuseTunnel(
-  cf: Cf, zoneId: string, host: HostSpec, opts: CreateOptions, existing: DnsRecord[],
+  cf: Cf, zoneId: string, host: HostSpec, opts: CreateOptions, existing: DnsRecord[], access: Protection,
 ): Promise<CreateResult | null> {
   const prev = getEntry(host.hostname);
   const tunnelId = prev?.tunnelId;
@@ -169,15 +193,17 @@ async function tryReuseTunnel(
   await putIngress(cf, tunnelId, buildIngress({ hostname: host.hostname, port: opts.port, proto: opts.proto, host: opts.host }));
   const token = await getTunnelToken(cf, tunnelId);
   await stopConnector(prev);
-  await recordRunning(host, zoneId, tunnelId, record.id, opts);
+  await recordRunning(host, zoneId, tunnelId, record.id, opts, access);
   return { host, tunnelId, token };
 }
 
-async function recordRunning(host: HostSpec, zoneId: string, tunnelId: string, dnsRecordId: string, opts: CreateOptions): Promise<void> {
+async function recordRunning(
+  host: HostSpec, zoneId: string, tunnelId: string, dnsRecordId: string, opts: CreateOptions, access: Protection,
+): Promise<void> {
   await upsertEntry(host.hostname, {
     subdomain: host.subdomain, zone: host.zone, zoneId,
     tunnelId, dnsRecordId, port: opts.port, proto: opts.proto, host: opts.host,
-    bootId: currentBootId(), state: "running", ...lifecycleFields(opts),
+    bootId: currentBootId(), state: "running", ...lifecycleFields(opts, access),
   });
 }
 

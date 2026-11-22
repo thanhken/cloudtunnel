@@ -88,4 +88,21 @@ describe("provisionTunnels", () => {
     expect(exit).not.toHaveBeenCalled();
     exit.mockRestore();
   });
+
+  it("a supervised run retries a rejected / under-scoped token only every 10 minutes (no restart storm)", async () => {
+    const { provisionTunnels } = await import("../src/core/tunnel-provisioner.js");
+    const { createTunnelSubdomain } = await import("../src/core/orchestrator-create.js");
+    const { CliError } = await import("../src/ui/errors.js");
+    const { say } = await import("../src/ui/output.js");
+    const warn = vi.spyOn(say, "warn").mockImplementation(() => {});
+    vi.mocked(createTunnelSubdomain).mockRejectedValueOnce(new CliError("can't manage Access", { status: 403, hint: "add the Access scopes" }));
+    const ctrl = new AbortController();
+    const run = provisionTunnels({ token: "t", accountId: "a" } as Cf, "cloudflared",
+      [{ port: 8080, proto: "http", name: "web", zone: "example.com" }], { keepAlive: true, detach: true, signal: ctrl.signal });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringMatching(/add the Access scopes.*retrying in 600s/)));
+    ctrl.abort(new Error("stopped"));
+    await expect(run).rejects.toThrow("stopped");
+    expect(createTunnelSubdomain).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
 });

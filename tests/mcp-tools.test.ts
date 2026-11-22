@@ -60,6 +60,12 @@ describe("MCP tools", () => {
     expect(deps.up).toHaveBeenCalledWith("x:3000", expect.objectContaining({ replace: true }));
   });
 
+  it("tunnel_up passes protect rules through to the API", async () => {
+    const deps = makeDeps();
+    await createToolHandlers(deps).tunnel_up({ port: 3000, subdomain: "x", protect: ["a@x.com"] });
+    expect(deps.up).toHaveBeenCalledWith("x:3000", expect.objectContaining({ protect: ["a@x.com"] }));
+  });
+
   it("tunnel_list reaps stale tunnels first", async () => {
     const deps = makeDeps();
     const r = await createToolHandlers(deps).tunnel_list({});

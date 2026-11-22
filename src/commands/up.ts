@@ -1,4 +1,7 @@
 import type { Command } from "commander";
+import { parseProtect, webmailRules } from "../core/protect-spec.js";
+import { ensureAccessApp } from "../core/access-protection.js";
+import { deleteAccessApp } from "../cloudflare/access.js";
 import { CliError } from "../ui/errors.js";
 import { intro, isInteractive, promptText, say } from "../ui/output.js";
 import { printLsTable } from "../ui/ls-table.js";
@@ -30,6 +33,7 @@ interface UpOptions {
   yes?: boolean;
   json?: boolean;
   ttl?: string; // auto-release after this long (e.g. 2h)
+  protect?: string; // emails / @domains allowed through a one-time-PIN login
 }
 
 /** Interactive port prompt (0-arg wizard). */
@@ -71,6 +75,11 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
       hint: "a foreground run never finishes; scripts/agents should use --detach (or the Node API / MCP)",
     });
   }
+  const protect = opts.protect !== undefined ? parseProtect(opts.protect) : undefined;
+  const webmail = protect ? webmailRules(protect) : [];
+  if (webmail.length) {
+    say.warn(`${webmail.join(", ")} lets ANYONE with an account at that provider in — list exact addresses instead if that's not intended.`);
+  }
   const parsed: TunnelSpec[] | null = specArgs.length ? specArgs.map(parseTunnelSpec) : null;
   if (parsed === null && !isInteractive()) {
     throw new CliError("No tunnel spec given.", { hint: "e.g. cloudtunnel api:8080" });
@@ -97,7 +106,7 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
     if (opts.service && name === undefined) name = randomSlug();
     items.push({
       port: spec.port, proto: opts.proto, name, zone: domain, host: spec.host,
-      defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes,
+      defaultZone: creds.defaultZone, force: opts.force, yes: opts.yes, protect,
     });
   }
 
@@ -153,8 +162,18 @@ async function registerServices(
   for (const item of items) {
     const subdomain = item.name!; // concrete (baked above)
     const fqdn = subdomain === "@" ? domain : `${subdomain}.${domain}`;
+    // Protect from here, where a missing scope or a confirmation can still
+    // reach the user — the service itself runs unattended.
+    const app = item.protect?.length
+      ? await ensureAccessApp(cf, fqdn, item.protect, { interactive: isInteractive() && !item.yes })
+      : undefined;
     await patchEntry(fqdn, { state: "provisioning", pid: undefined, metricsPort: undefined });
-    installServiceForSpec({ subdomain, port: item.port, host: item.host, zone: domain, proto, protocol });
+    try {
+      installServiceForSpec({ subdomain, port: item.port, host: item.host, zone: domain, proto, protocol, protect: item.protect });
+    } catch (err) {
+      if (app?.created) await deleteAccessApp(cf, app.appId).catch(() => {});
+      throw err;
+    }
     fqdns.push(fqdn);
   }
   say.ok(`Registered ${fqdns.length} boot service(s) — waiting for them to come up…`);
@@ -213,6 +232,7 @@ export function registerUp(program: Command): void {
     .option("--detach", "run the connectors in the background")
     .option("--keep-alive", "supervised mode with auto-heal watchdog")
     .option("--ttl <duration>", "release automatically after this long: 30m, 2h, 1d (1m–30d)")
+    .option("--protect <emails>", "require an email one-time PIN: alice@x.com,@company.com (Cloudflare Access)")
     .option("--service", "register each subdomain as a boot service (Linux systemd · macOS launchd · Windows Task Scheduler)")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't prompt; don't ask before replacing an existing record")

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 
+vi.mock("../src/core/access-protection.js", () => ({ ensureAccessApp: vi.fn(), removeAccessApp: vi.fn(async () => true) }));
 vi.mock("../src/cloudflare/tunnels.js", () => ({
   listTunnels: vi.fn(async () => []),
   getTunnel: vi.fn(async () => ({ id: "tun-1", name: "ct-api-1a2b" })),

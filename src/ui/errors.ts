@@ -11,16 +11,20 @@ export class CliError extends Error {
   /** HTTP status when this wraps a Cloudflare API error (lets callers tell a
    * genuine 404 "already gone" from a transient failure). */
   readonly status?: number;
+  /** Cloudflare's numeric error code from the response envelope, when any
+   * (e.g. 11010 = Access application already exists). */
+  readonly cfCode?: number;
   /** Already reported to the user (e.g. a prompt cancel that printed its own
    * line) — `reportError` prints nothing and just returns the exit code. */
   readonly silent: boolean;
 
-  constructor(message: string, opts: { exitCode?: number; hint?: string; status?: number; silent?: boolean } = {}) {
+  constructor(message: string, opts: { exitCode?: number; hint?: string; status?: number; cfCode?: number; silent?: boolean } = {}) {
     super(message);
     this.name = "CliError";
     this.exitCode = opts.exitCode ?? 1;
     this.hint = opts.hint;
     this.status = opts.status;
+    this.cfCode = opts.cfCode;
     this.silent = opts.silent ?? false;
   }
 }
