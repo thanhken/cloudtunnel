@@ -15,6 +15,7 @@ import { registerLogs } from "./commands/logs.js";
 import { registerService } from "./commands/service.js";
 import { registerUrl } from "./commands/url.js";
 import { registerExpireHidden } from "./commands/expire-hidden.js";
+import { registerMcp } from "./commands/mcp.js";
 import { maybeRepairServicesAfterUpgrade } from "./core/service-upgrade-check.js";
 
 const require = createRequire(import.meta.url);
@@ -48,6 +49,7 @@ export function buildProgram(opts: { json?: boolean } = {}): Command {
   for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerUrl, registerService, registerExpireHidden]) {
     register(program);
   }
+  registerMcp(program, pkg.version);
   return program;
 }
 

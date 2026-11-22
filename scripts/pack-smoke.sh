@@ -35,3 +35,5 @@ void f; void t;
 TS
 npx --no-install tsc --noEmit --strict --module nodenext --moduleResolution nodenext --skipLibCheck false check.ts
 echo "types:           ok"
+
+node "$root/scripts/mcp-smoke.mjs" npx --no-install ctun
