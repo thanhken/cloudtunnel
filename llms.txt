@@ -1,0 +1,19 @@
+# cloudtunnel
+
+> Expose a local port at a public HTTPS subdomain on your own Cloudflare domain, via Cloudflare Tunnel. CLI (`cloudtunnel` / `ctun`), Node API (`import { up } from "@iamken/cloudtunnel"`) and an MCP server (`ctun mcp`) for AI agents. Tunnels can expire (`--ttl`) or require an email one-time PIN (`--protect`, Cloudflare Access).
+
+Install: `npm i -g @iamken/cloudtunnel`, then `cloudtunnel login` once (Cloudflare API token). Node ≥ 20; `cloudflared` is auto-installed.
+
+## Docs
+
+- [Quickstart](https://github.com/thanhken/cloudtunnel#quickstart): `cloudtunnel api:8080` → `https://api.<your-domain>`; spec is `[subdomain:]port[@host]`
+- [Commands](https://github.com/thanhken/cloudtunnel#commands): `up`, `ls`, `delete`, `logs`, `url`, `mcp`, `service repair`
+- [Share safely](https://github.com/thanhken/cloudtunnel#share-safely): `--ttl 2h`, `--protect alice@x.com,@company.com`
+- [For AI agents](https://github.com/thanhken/cloudtunnel#for-ai-agents): MCP tools (`tunnel_up`, `tunnel_list`, `tunnel_down`, `tunnel_logs`), Node API, `--json`, exit codes
+- [Authentication](https://github.com/thanhken/cloudtunnel#authentication): required token scopes
+- [Troubleshooting](https://github.com/thanhken/cloudtunnel#troubleshooting)
+
+## Optional
+
+- [Compared to](https://github.com/thanhken/cloudtunnel#compared-to): cloudflared, ngrok, Tailscale Funnel
+- [npm package](https://www.npmjs.com/package/@iamken/cloudtunnel)

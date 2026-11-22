@@ -3,6 +3,7 @@
 # cloudtunnel
 
 **Expose any local port at a public HTTPS subdomain — on _your own_ Cloudflare domains.**
+**CLI · Node API · MCP server for AI agents.**
 
 The tunnel and DNS live in **your** Cloudflare account, so you keep clean, stable URLs and full control.
 
@@ -30,6 +31,8 @@ cloudtunnel 8080       # → https://brave-otter-1a2b.example.com is live
 - **One command, one or many** — `cloudtunnel api:8080 web:5173` brings up several tunnels at once, each a live HTTPS URL.
 - **Spec-driven** — a tunnel is just `[subdomain:]port[@host]`. No profiles to define, nothing to save.
 - **Two states** — `up` brings subdomains online; `delete` (or <kbd>Ctrl-C</kbd>) releases them (tunnel + DNS + any boot service). Re-running `up` always starts clean.
+- **Share safely** — `--ttl 2h` links that delete themselves, `--protect alice@x.com` for an email one-time-PIN login in front of the URL.
+- **Built for scripts and AI agents** — `--json`, stable exit codes, a Node API and an MCP server (`ctun mcp`).
 - **Secure by default** — token passed via env (never argv), stored `0600`, destructive ops ownership-gated and re-verified.
 
 ---
@@ -44,6 +47,8 @@ cloudtunnel api:8080@192.168.1.20          # forward to another host/IP (IPv4/IP
 cloudtunnel api:8080 web:5173 -d foo.io    # several tunnels at once, under foo.io
 cloudtunnel api:8080 --detach              # run in the background
 cloudtunnel api:8080 --service             # register a boot service
+cloudtunnel demo:3000 --ttl 2h             # deletes itself after 2 hours
+cloudtunnel admin:8080 --protect me@x.com  # only me@x.com gets in (email one-time PIN)
 ```
 
 A **spec** is `[subdomain:]port[@host]`:
@@ -64,10 +69,12 @@ Run `cloudtunnel` with no arguments and it guides you (port → subdomain → do
 | Command | What it does |
 | --- | --- |
 | `login` | Authenticate; resolve account + list your domains. `--status` to inspect. |
-| `<spec…>` · `up` | Bring one or more tunnels online. `-d`, `--proto`, `--protocol`, `--detach`, `--service`, `-f`, `-y`. |
-| `ls` · `ps` | List tunnels — `# · URL · TARGET · PROTOCOL · STATE · SERVICE · PID`. `--all` scans the whole account. |
+| `<spec…>` · `up` | Bring one or more tunnels online. `-d`, `--proto`, `--protocol`, `--detach`, `--service`, `--ttl`, `--protect`, `--json`, `-f`, `-y`. |
+| `ls` · `ps` | List tunnels — `# · URL · TARGET · PROTOCOL · STATE · SERVICE · PID`. `--all` scans the whole account, `--json` for scripts. |
 | `delete <target…>` | Release tunnel(s) — connector + tunnel + DNS + boot service. `--all`, `--dry-run`, `-f`. |
 | `logs <target>` | Show a connector's log. `-f` to follow, `-n` for line count. |
+| `url <target>` | Print a tunnel's public URL — `curl $(ctun url api)`. |
+| `mcp` | Run the MCP server on stdio (for Claude Code, Cursor, …) — see [For AI agents](#for-ai-agents). |
 | `service repair` | Regenerate + restart boot services that are outdated, broken, stopped, or duplicated. `-y`, `--dry-run`. |
 
 A **`<target>`** is a `#` number, a subdomain, a full hostname/URL, or a tunnel-id prefix. `ls --all` also numbers tunnels created elsewhere (or leaked by a failed run); pair with `-f` when they aren't cloudtunnel-managed.
@@ -99,9 +106,89 @@ Each is just a flag or subcommand away:
 
 ---
 
+## Share safely
+
+A tunnel URL is **public** — anyone who has it reaches your service. Two flags narrow that:
+
+- **`--ttl <duration>`** — release the tunnel (and its DNS record) automatically after `30m`, `2h`, `1d` (1m–30d). Works in the foreground and with `--detach` (a small background watcher does the release). It runs on your machine: if the machine is off at the deadline, the next `cloudtunnel` command cleans it up.
+- **`--protect <emails>`** — put a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) login in front of the URL. Visitors enter their email and get a one-time PIN; only listed addresses (`alice@x.com`) or whole domains (`@company.com`) get in. Free on Cloudflare Zero Trust's free plan (up to 50 users).
+
+```bash
+cloudtunnel demo:3000 --ttl 2h --protect alice@client.com,@mycompany.com
+```
+
+Notes on `--protect`:
+- Needs two extra token scopes (see [Authentication](#authentication)) and Cloudflare Zero Trust enabled on the account (one-time, free: [one.dash.cloudflare.com](https://one.dash.cloudflare.com/)).
+- It uses the **One-time PIN** login method. If your Zero Trust account already has other login methods (Google, Okta…) and no One-time PIN, cloudtunnel asks before adding it — that is an account-wide setting: Access apps that allow every login method will offer it too.
+- Don't protect **webhook receivers** (Stripe, GitHub…) — they can't log in. Use an unguessable subdomain and verify the webhook signature instead.
+- `@gmail.com`-style rules let *anyone* with an account there in; cloudtunnel warns about them.
+- The Access app is named `cloudtunnel:<hostname>` and is removed together with the tunnel.
+
+---
+
+## For AI agents
+
+cloudtunnel is meant to be driven by scripts and coding agents as well as people.
+
+**MCP server** — give Claude Code (or any MCP client) tunnel tools:
+
+```bash
+claude mcp add --transport stdio cloudtunnel --scope user -- npx -y @iamken/cloudtunnel mcp
+```
+
+Other clients (Cursor, Windsurf, …): command `npx`, args `["-y", "@iamken/cloudtunnel", "mcp"]`. Run `cloudtunnel login` once first, or pass `CLOUDFLARE_API_TOKEN` in the server's env.
+
+| Tool | Does |
+| --- | --- |
+| `tunnel_up` | Expose a local port: `{ port, subdomain?, domain?, proto?, ttl?, protect?, replace? }` → the URL |
+| `tunnel_list` | List tunnels (and clean up expired / orphaned ones) |
+| `tunnel_down` | Release a tunnel this MCP server created |
+| `tunnel_logs` | Last lines of a tunnel's connector log |
+
+Guard rails: forwards to **localhost only** (the user can allow LAN hosts with `CLOUDTUNNEL_MCP_ALLOW_REMOTE_HOST=1`; link-local / cloud-metadata addresses are always refused) · never takes over an existing hostname unless `replace: true` · `tunnel_down` only touches tunnels created through MCP · tunnels live as long as the MCP session (use `--detach` / `--service` from the CLI for durable ones).
+
+**Node API** — the same thing from code, no output, errors thrown:
+
+```ts
+import { up } from "@iamken/cloudtunnel";
+
+const session = await up("api:3000", { ttl: "1h" });   // also: domain, proto, protect, replace, detach
+console.log(session.tunnels[0].url);                   // https://api.example.com
+await session.release();                               // tunnel + DNS gone
+```
+
+Also exported: `ls()`, `down(target)`, `url(target)`, `CloudtunnelError`, and the `Tunnel` type.
+
+**CLI in scripts** — `--json` prints one JSON document on stdout (progress goes to stderr):
+
+```bash
+cloudtunnel api:3000 --detach --ttl 1h --json   # {"schemaVersion":1,"tunnels":[{"url":…,"fqdn":…,"state":…,"expiresAt":…,"protected":…}],"failed":[]}
+cloudtunnel ls --json
+curl "$(cloudtunnel url api)/health"
+```
+
+Exit codes: `0` ok · `1` error · `2` invalid usage · `4` not found / hostname already in use · `130` cancelled.
+
+---
+
+## Compared to
+
+| | cloudtunnel | `cloudflared` alone | ngrok | Tailscale Funnel |
+| --- | --- | --- | --- | --- |
+| URL on your own domain | ✅ any subdomain | ✅ after manual setup | paid plans | `*.ts.net` only |
+| One command to a stable URL | ✅ | quick tunnels: random `trycloudflare.com` URL; named: create tunnel + route DNS + config | ✅ | ✅ |
+| Release tunnel + DNS together | ✅ `delete` / Ctrl-C / `--ttl` | manual | n/a | n/a |
+| Boot service per URL | ✅ `--service` | ✅ one service per tunnel config | agent service | via tailscaled |
+| Login in front of the URL | ✅ `--protect` (email one-time PIN) | configure Cloudflare Access yourself | ✅ (OAuth, IP rules, …) | — (Funnel URLs are public) |
+| MCP server / Node API | ✅ / ✅ | — | — / ✅ SDK | — |
+
+cloudtunnel drives the official `cloudflared` connector and the Cloudflare API — it adds the provisioning, cleanup and ergonomics around them.
+
+---
+
 ## Authentication
 
-`cloudtunnel login` opens the Cloudflare API-tokens page and walks you through **Create Token → Create Custom Token**, then add these scopes (least-privilege — limit the token to the domains you tunnel into):
+`cloudtunnel login` opens Cloudflare's **Create API token** form with these scopes already selected — check them, optionally limit the token to the domains you tunnel into, create it and paste it back:
 
 | Resource | Permission |
 | --- | --- |
@@ -109,6 +196,8 @@ Each is just a flag or subcommand away:
 | Account | Account Settings · **Read** |
 | Zone | DNS · **Edit** |
 | Zone | Zone · **Read** |
+
+For `--protect`, the token also needs **Account · Access: Apps and Policies · Edit** and **Account · Access: Organizations, Identity Providers, and Groups · Edit**. A token without them keeps working for everything else; `--protect` then fails with a link that opens the token form with all six scopes selected.
 
 Provide the token via (highest precedence first): `CLOUDFLARE_API_TOKEN` env → `cloudtunnel login --token-stdin` → the hidden prompt from `cloudtunnel login`. The token is **never** passed on the command line and is stored `0600`.
 
@@ -131,6 +220,8 @@ Provide the token via (highest precedence first): `CLOUDFLARE_API_TOKEN` env →
 | **`delete` says "active connections"** | Handled automatically — cloudtunnel cleans up the connections and retries. |
 | **"grey-clouded" error** | cfargotunnel routing needs an orange-cloud (proxied) CNAME. |
 | **A DNS record already occupies the name** | Pick another subdomain/domain, or pass `-f/--force` to replace a non-tunnel record. |
+| **A new subdomain shows another site (your hosting) for a few minutes** | Your zone has a wildcard record (`*.your-domain`) and a DNS resolver cached its answer for the new name. It clears after that record's TTL; meanwhile `dig <host> @1.1.1.1` shows the right answer. |
+| **`--protect` says Zero Trust isn't set up / token can't manage Access** | Enable Zero Trust once at [one.dash.cloudflare.com](https://one.dash.cloudflare.com/) (free plan), and add the two Access scopes to your token (see [Authentication](#authentication)). |
 | **Cloudflare API errors / timeouts** | Re-run with `CLOUDTUNNEL_DEBUG=1` to trace every API request and its status. |
 
 ---

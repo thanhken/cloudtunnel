@@ -37,7 +37,15 @@
     "cloudflared",
     "cli",
     "ngrok",
-    "subdomain"
+    "subdomain",
+    "mcp",
+    "mcp-server",
+    "ngrok-alternative",
+    "localtunnel",
+    "expose-localhost",
+    "webhook",
+    "cloudflare-access",
+    "ai-agent"
   ],
   "license": "MIT",
   "author": "thanhken <admin@iamken.work>",
