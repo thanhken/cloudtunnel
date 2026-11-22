@@ -23,3 +23,15 @@ describe("hostname lock", () => {
     await acquireHostnameLock("lock-b.abc.com"); // other hostnames are independent
   });
 });
+
+describe("hostname lock release", () => {
+  it("can be released and re-taken in the same process (long-lived API/MCP)", async () => {
+    const { acquireHostnameLock, assertHostnameFree } = await import("../src/connector/hostname-lock.js");
+    const release = await acquireHostnameLock("lock-c.abc.com");
+    await release();
+    await assertHostnameFree("lock-c.abc.com");
+    const again = await acquireHostnameLock("lock-c.abc.com");
+    await again();
+    await again(); // idempotent
+  });
+});

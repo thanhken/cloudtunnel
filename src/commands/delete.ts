@@ -2,24 +2,11 @@ import type { Command } from "commander";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { ensureAuth } from "../config/ensure-auth.js";
-import { resolveCf, type Cf } from "../cloudflare/client.js";
-import { entryFqdn, listEntries } from "../connector/registry.js";
-import { removeTunnelById, removeTunnelSubdomain, resolveRemoteTarget, resolveTarget } from "../core/orchestrator-manage.js";
-import { lookupUnmanagedByIndex } from "../core/unmanaged-scan-cache.js";
-import { serviceName, serviceState, uninstallService } from "../core/service.js";
+import { resolveCf } from "../cloudflare/client.js";
+import { listEntries } from "../connector/registry.js";
+import { releaseTargets } from "../core/release-targets.js";
 
 interface DeleteOptions { all?: boolean; force?: boolean; dryRun?: boolean }
-
-/** Remove a subdomain's boot service (if any) first so its supervisor can't
- * restart the connector mid-teardown, then release the tunnel + DNS. */
-async function deleteOne(cf: Cf, fqdn: string, opts: DeleteOptions): Promise<void> {
-  const hasService = serviceState(fqdn) !== "none";
-  if (hasService && !opts.dryRun) uninstallService(fqdn);
-  await removeTunnelSubdomain(cf, fqdn, { force: opts.force, dryRun: opts.dryRun });
-  if (!hasService) return;
-  if (opts.dryRun) say.info(`Would also remove boot service ${serviceName(fqdn)}`);
-  else say.ok(`Removed boot service ${serviceName(fqdn)}`);
-}
 
 export function registerDelete(program: Command): void {
   program
@@ -34,47 +21,17 @@ export function registerDelete(program: Command): void {
       const cf = resolveCf();
 
       if (opts.all) {
-        const entries = listEntries();
-        if (entries.length === 0) {
+        if (listEntries().length === 0) {
           say.info("Nothing to release.");
           return;
         }
-        for (const e of entries) {
-          const fqdn = entryFqdn(e);
-          try {
-            await deleteOne(cf, fqdn, opts);
-          } catch (err) {
-            say.warn(`Could not release ${fqdn}: ${(err as Error).message}`);
-          }
-        }
+        // --all keeps going past a failure and reports each one.
+        const res = await releaseTargets(cf, "all", opts);
+        for (const f of res.failed) say.warn(`Could not release ${f.fqdn}: ${f.error}`);
         return;
       }
 
       if (targets.length === 0) throw new CliError("Pass a subdomain (# / name / URL / tunnel-id) or --all.");
-      for (const target of targets) {
-        let fqdn: string;
-        try {
-          ({ fqdn } = resolveTarget(target));
-        } catch (err) {
-          // Unknown to the local registry — the target may be the `#` an
-          // unmanaged tunnel was shown with in the last `ls --all`, or the id
-          // of an untracked tunnel (created elsewhere, or leaked by a failed
-          // run); try both against what's pinned/on the account before giving up.
-          const scanned = /^\d+$/.test(target) ? lookupUnmanagedByIndex(Number(target)) : undefined;
-          if (scanned) {
-            say.info(`${target} → ${scanned.fqdn} (unmanaged, numbered by the last \`ls --all\`)`);
-            fqdn = scanned.fqdn;
-          } else {
-            const remote = await resolveRemoteTarget(cf, target);
-            if (!remote) throw err;
-            if (!remote.fqdn) {
-              await removeTunnelById(cf, remote.tunnel, opts);
-              continue;
-            }
-            fqdn = remote.fqdn;
-          }
-        }
-        await deleteOne(cf, fqdn, opts);
-      }
+      await releaseTargets(cf, targets, { ...opts, stopOnError: true });
     });
 }

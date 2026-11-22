@@ -9,7 +9,7 @@ import { checkLocalReady } from "../connector/health.js";
 import type { CreateOptions } from "../core/orchestrator-create.js";
 import { startTunnels } from "../core/up-runner.js";
 import { resolveDomain } from "../core/resolve-domain.js";
-import { listAll } from "../core/orchestrator-manage.js";
+import { listAll, reapOrphans } from "../core/orchestrator-manage.js";
 import { getEntry, isOurConnector, patchEntry } from "../connector/registry.js";
 import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
 import { parseTransportProtocol, type TransportProtocol } from "../core/transport-protocol.js";
@@ -62,6 +62,10 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   const creds = await ensureAuth();
   const cf = resolveCf();
   const bin = await ensureCloudflared();
+  // Tunnels whose owning process crashed would otherwise stay public forever.
+  // Not on supervised (boot-service) starts: N services booting together would
+  // race on the same orphans and delay their own start while offline.
+  if (!opts.keepAlive) await reapOrphans(cf);
 
   if (process.stdout.isTTY) intro("cloudtunnel");
 

@@ -5,6 +5,7 @@ import os from "node:os";
 import lockfile from "proper-lockfile";
 import { ensureDirs, registryFile } from "../config/paths.js";
 import type { TransportProtocol } from "../core/transport-protocol.js";
+import type { TunnelCreator } from "../core/tunnel-types.js";
 
 export type EntryState = "provisioning" | "running" | "stopped" | "orphaned";
 
@@ -25,6 +26,14 @@ export interface RegistryEntry {
   logFile?: string;
   createdAt: string;
   state: EntryState;
+  // Lifecycle fields — written explicitly on EVERY create (never inherited from
+  // a previous tunnel on the same hostname; see `lifecycleFields`).
+  expiresAt?: string; // ISO; `--ttl` release time
+  accessAppId?: string; // Cloudflare Access app guarding the hostname
+  protectedFor?: string[]; // `--protect` emails / @domains
+  ownerPid?: number; // in-process owner (CLI foreground / Node API / MCP)
+  ownerBootId?: string;
+  createdBy?: TunnelCreator;
 }
 
 /** The real hostname for an entry. `@` is the apex, keyed in the registry by the
@@ -156,9 +165,18 @@ function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // EPERM: the process exists but belongs to another user — still alive.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/** False when an in-process tunnel's owner (CLI foreground / Node API / MCP
+ * server) is gone — its connector then serves a public URL nobody controls.
+ * Entries without an owner (detached, boot service) are never "orphaned". */
+export function isOwnerAlive(entry: RegistryEntry): boolean {
+  if (!entry.ownerPid) return true;
+  return entry.ownerBootId === currentBootId() && pidAlive(entry.ownerPid);
 }
 
 /** Verify a pid is still OUR cloudflared: alive, same boot, and (Linux) its

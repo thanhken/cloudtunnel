@@ -6,9 +6,10 @@ import type { DnsRecord, Tunnel as CfTunnel } from "../cloudflare/types.js";
 import type { Tunnel } from "./tunnel-types.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
-import { entryFqdn, getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
+import { entryFqdn, getEntry, isOwnerAlive, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
 import { probeEntryState } from "../connector/health.js";
 import { stopConnector } from "../connector/process.js";
+import { assertHostnameFree } from "../connector/hostname-lock.js";
 import { serviceUrl } from "./ingress.js";
 import { serviceState } from "./service.js";
 import { serviceIssuesByFqdn } from "./service-inventory.js";
@@ -42,7 +43,12 @@ export function resolveTarget(target: string): { fqdn: string; entry?: RegistryE
   return { fqdn: entryFqdn(entry), entry };
 }
 
-export interface RemoveOptions { force?: boolean; dryRun?: boolean; quiet?: boolean }
+export interface RemoveOptions {
+  force?: boolean; dryRun?: boolean; quiet?: boolean;
+  /** Only release if the hostname still points at this tunnel — automatic
+   * releases (orphan / TTL reap) must never delete a newer tunnel. */
+  expectTunnelId?: string;
+}
 
 /** Release a subdomain: stop the connector, then delete the tunnel + DNS on
  * Cloudflare. Re-verifies fresh state (cached ids are hints), ownership-gates
@@ -59,6 +65,9 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
     throw new CliError(`${fqdn} points to a record not managed by cloudtunnel.`, { hint: "pass --force to release it" });
   }
   const tunnelId = record ? tunnelIdFromCname(record.content) : entry?.tunnelId;
+  if (opts.expectTunnelId && tunnelId !== opts.expectTunnelId) {
+    throw new CliError(`${fqdn} now serves a different tunnel — not releasing it.`, { exitCode: 4 });
+  }
 
   if (opts.dryRun) {
     say.info(`Would release: tunnel ${tunnelId ?? "(none)"}${record ? `, DNS ${record.id}` : ""}`);
@@ -155,14 +164,14 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<Tun
       fqdn,
       target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
       protocol: e.protocol ?? "auto",
-      state: await probeEntryState(e, gone),
+      state: isOwnerAlive(e) ? await probeEntryState(e, gone) : "orphaned",
       service: serviceState(fqdn),
       serviceIssue: issues.get(fqdn) ?? null,
       pid: e.state === "running" && e.pid ? e.pid : null,
       managed: true,
-      expiresAt: null,
-      protected: null,
-      createdBy: null,
+      expiresAt: e.expiresAt ?? null,
+      protected: e.protectedFor ?? null,
+      createdBy: e.createdBy ?? null,
     };
   }));
   if (opts.all) {
@@ -193,4 +202,27 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<Tun
     saveUnmanagedScan(scan);
   }
   return rows;
+}
+
+/** Release tunnels whose in-process owner died (crash / kill -9 of the CLI
+ * foreground, Node API host or MCP server) — otherwise their connector keeps a
+ * public URL up indefinitely. Only touches a hostname that still points at the
+ * recorded tunnel. Best-effort: failures are warned, never thrown. */
+export async function reapOrphans(cf: Cf): Promise<string[]> {
+  const reaped: string[] = [];
+  for (const e of listEntries()) {
+    if (isOwnerAlive(e) || !e.tunnelId) continue;
+    const fqdn = entryFqdn(e);
+    try {
+      // A live foreground owner always holds the hostname lock; a dead one's
+      // lock goes stale — so a held lock means "not actually orphaned".
+      await assertHostnameFree(fqdn);
+      await removeTunnelSubdomain(cf, fqdn, { quiet: true, expectTunnelId: e.tunnelId });
+      reaped.push(fqdn);
+      say.dim(`Released orphaned ${fqdn} (its owner process is gone).`);
+    } catch (err) {
+      say.debug(`[reap] ${fqdn}: ${(err as Error).message}`);
+    }
+  }
+  return reaped;
 }

@@ -15,7 +15,8 @@ import { createCname, deleteDnsRecord, findDnsRecords } from "../cloudflare/dns.
 import type { DnsRecord } from "../cloudflare/types.js";
 import { buildIngress } from "./ingress.js";
 import { resolveHostSpec, type HostSpec } from "./slug.js";
-import { currentBootId, getEntry, patchEntry, removeEntry, upsertEntry } from "../connector/registry.js";
+import { currentBootId, getEntry, patchEntry, removeEntry, upsertEntry, type RegistryEntry } from "../connector/registry.js";
+import type { TunnelCreator } from "./tunnel-types.js";
 import { stopConnector } from "../connector/process.js";
 import { CliError } from "../ui/errors.js";
 import { confirm, isInteractive, say } from "../ui/output.js";
@@ -33,6 +34,31 @@ export interface CreateOptions {
   /** Warm restart: keep the hostname's tunnel + DNS when they still match the
    * registry entry (supervised/boot-service restarts) instead of recreating. */
   reuse?: boolean;
+  /** false = caller can never be asked (Node API / MCP): an existing hostname
+   * is refused unless `replace`. Unset = CLI behavior (prompt on a TTY, else
+   * replace) — kept for backward compatibility of scripts. */
+  interactive?: boolean;
+  /** Allow replacing a hostname that already has a tunnel record. */
+  replace?: boolean;
+  /** The tunnel lives only as long as this process (not detached / not a boot
+   * service): record it as owner so a crash leaves a detectable orphan. */
+  owned?: boolean;
+  createdBy?: TunnelCreator;
+  expiresAt?: string;
+}
+
+/** Every lifecycle field, always present (undefined when unset) so an upsert
+ * overrides whatever an earlier tunnel on the same hostname left behind. */
+function lifecycleFields(opts: CreateOptions): Pick<RegistryEntry,
+  "expiresAt" | "accessAppId" | "protectedFor" | "ownerPid" | "ownerBootId" | "createdBy"> {
+  return {
+    expiresAt: opts.expiresAt,
+    accessAppId: undefined,
+    protectedFor: undefined,
+    ownerPid: opts.owned ? process.pid : undefined,
+    ownerBootId: opts.owned ? currentBootId() : undefined,
+    createdBy: opts.createdBy,
+  };
 }
 
 export interface CreateResult {
@@ -66,7 +92,13 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
         hint: "pick another --subdomain/--hostname, or pass -f/--force to replace it",
       });
     }
-    if (!opts.force && !opts.yes && isInteractive()) {
+    if (opts.interactive === false && !opts.replace && !opts.force) {
+      throw new CliError(`${host.hostname} is already in use by a tunnel.`, {
+        exitCode: 4,
+        hint: "pick another subdomain, or pass replace: true to take it over",
+      });
+    }
+    if (!opts.force && !opts.yes && opts.interactive !== false && isInteractive()) {
       const kind = isTunnelRecord ? "tunnel" : "DNS";
       if (!(await confirm(`${host.hostname} already has a ${kind} record. Replace it?`))) {
         throw new CliError("Cancelled.", { exitCode: 130 });
@@ -86,7 +118,7 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
   await upsertEntry(host.hostname, {
     subdomain: host.subdomain, zone: host.zone, zoneId: zone.id,
     port: opts.port, proto: opts.proto, host: opts.host, state: "provisioning",
-    pid: undefined, metricsPort: undefined,
+    pid: undefined, metricsPort: undefined, ...lifecycleFields(opts),
   });
 
   let tunnelId: string | undefined;
@@ -145,7 +177,7 @@ async function recordRunning(host: HostSpec, zoneId: string, tunnelId: string, d
   await upsertEntry(host.hostname, {
     subdomain: host.subdomain, zone: host.zone, zoneId,
     tunnelId, dnsRecordId, port: opts.port, proto: opts.proto, host: opts.host,
-    bootId: currentBootId(), state: "running",
+    bootId: currentBootId(), state: "running", ...lifecycleFields(opts),
   });
 }
 

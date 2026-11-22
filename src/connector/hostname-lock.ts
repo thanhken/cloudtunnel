@@ -26,36 +26,58 @@ function busyError(fqdn: string): CliError {
   });
 }
 
-/** Hold the hostname for the lifetime of this process (released on exit).
- * `waitMs` > 0 waits for a previous holder (e.g. a service that is restarting). */
-export async function acquireHostnameLock(fqdn: string, opts: { waitMs?: number } = {}): Promise<void> {
+/** Called when the lock is lost to another process after a compromise (e.g.
+ * the machine slept past STALE_MS and someone else took the hostname). The CLI
+ * exits; a library host (Node API / MCP) marks its tunnels lost instead. */
+export type OnLockLost = (err: Error) => void;
+
+/** Hold the hostname until the returned `release()` is called (or the process
+ * exits). `waitMs` > 0 waits for a previous holder (e.g. a restarting service). */
+export async function acquireHostnameLock(
+  fqdn: string,
+  opts: { waitMs?: number; onLost?: OnLockLost } = {},
+): Promise<() => Promise<void>> {
   mkdirSync(locksDir, { recursive: true, mode: 0o700 });
   const waits = Math.ceil((opts.waitMs ?? 0) / 1000);
+  const holder: LockHolder = { release: undefined, released: false };
   try {
-    await takeLock(fqdn, waits);
+    holder.release = await takeLock(fqdn, waits, holder, opts.onLost);
   } catch (err) {
     if ((err as { code?: string }).code === "ELOCKED") throw busyError(fqdn);
     throw err;
   }
+  return async () => {
+    if (holder.released) return;
+    holder.released = true;
+    try { await holder.release?.(); } catch { /* already gone / compromised */ }
+  };
 }
+
+interface LockHolder { release: (() => Promise<void>) | undefined; released: boolean }
 
 /** Take the lock; if it is later compromised (refresh came too late, e.g. the
  * machine slept past STALE_MS — proper-lockfile then stops refreshing), take it
  * again so it can't silently go stale under a live supervisor. If another
- * process grabbed it meanwhile, exit: two supervisors would delete each other's
- * tunnel, and the boot service restarts this one to wait its turn. */
-function takeLock(fqdn: string, waits: number): Promise<unknown> {
+ * process grabbed it meanwhile, report via `onLost`: two supervisors would
+ * delete each other's tunnel. */
+function takeLock(fqdn: string, waits: number, holder: LockHolder, onLost?: OnLockLost): Promise<() => Promise<void>> {
   return lockfile.lock(lockPath(fqdn), {
     realpath: false,
     stale: STALE_MS,
     update: UPDATE_MS,
     retries: waits > 0 ? { retries: waits, minTimeout: 1000, maxTimeout: 1000 } : 0,
     onCompromised: () => {
+      if (holder.released) return;
       say.debug(`[lock] ${fqdn} lock was compromised; re-taking it`);
-      takeLock(fqdn, 0).catch((err: unknown) => {
-        say.warn(`Lost ${fqdn} to another cloudtunnel process (${(err as Error).message}) — exiting.`);
-        process.exit(1);
-      });
+      takeLock(fqdn, 0, holder, onLost)
+        .then((release) => {
+          holder.release = release;
+          if (holder.released) void release().catch(() => {}); // released meanwhile
+        })
+        .catch((err: unknown) => {
+          say.warn(`Lost ${fqdn} to another cloudtunnel process (${(err as Error).message}).`);
+          onLost?.(err as Error);
+        });
     },
   });
 }

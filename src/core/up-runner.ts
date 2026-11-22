@@ -1,79 +1,25 @@
-import { join } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
-import { reportError } from "../ui/errors.js";
+import { CliError, reportError } from "../ui/errors.js";
 import { dim, formatRoute, note, outro, say, spinner } from "../ui/output.js";
 import type { Cf } from "../cloudflare/client.js";
-import { logDir } from "../config/paths.js";
-import { pickFreePort, startConnector, stopConnector } from "../connector/process.js";
-import { waitHealthy, extractMetricsPort, type HealthResult } from "../connector/health.js";
-import { currentBootId, getEntry, markConnectorRunning } from "../connector/registry.js";
-import { acquireHostnameLock, assertHostnameFree } from "../connector/hostname-lock.js";
-import { createTunnelSubdomain, type CreateOptions, type CreateResult } from "./orchestrator-create.js";
-import { removeTunnelSubdomain } from "./orchestrator-manage.js";
-import { serviceUrl } from "./ingress.js";
-import { fqdnFor, serviceSlug } from "./service-exec.js";
+import { waitHealthy, type HealthResult } from "../connector/health.js";
+import type { CreateOptions } from "./orchestrator-create.js";
 import { notifyConnectorExited, startTunnelWatchdog, stopAllWatchdogs } from "./watchdog.js";
 import { readInstalledVersion } from "./installed-version.js";
 import type { TransportProtocol } from "./transport-protocol.js";
-
-interface StartedTunnel {
-  fqdn: string;
-  subdomain: string;
-  tunnelId: string;
-  target: string;
-  pid: number;
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+import { provisionTunnels, type TunnelSession } from "./tunnel-provisioner.js";
 
 /** Exit code a supervised run uses to ask its boot service for a restart onto
  * a newly installed version (systemd `Restart=always` / launchd `KeepAlive`). */
 export const UPGRADE_RESTART_EXIT_CODE = 75;
 const VERSION_CHECK_INTERVAL_MS = 60_000;
-/** How long a supervised start waits for a previous holder of the hostname
- * (e.g. the same service mid-restart) to let go. */
-const LOCK_WAIT_MS = 30_000;
-const MAX_CREATE_BACKOFF_MS = 60_000;
-
-function logFileFor(fqdn: string): string {
-  return join(logDir, `${serviceSlug(fqdn)}.log`);
-}
-
-/** The hostname an item will get, when it is fixed up front (random names are
- * picked inside create, so they can't collide and aren't locked). */
-function knownFqdn(item: CreateOptions): string | undefined {
-  if (item.hostname) return item.hostname;
-  return item.name !== undefined && item.zone ? fqdnFor(item.name, item.zone) : undefined;
-}
-
-/** Create the tunnel. Supervised (`--keep-alive`) runs reuse a still-valid
- * tunnel (warm restart) and retry forever with backoff — a boot service that
- * starts offline must wait for the network, not exit. */
-async function createWithBootRetry(cf: Cf, item: CreateOptions, keepAlive?: boolean): Promise<CreateResult> {
-  if (!keepAlive) return createTunnelSubdomain(cf, item);
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await createTunnelSubdomain(cf, { ...item, reuse: true });
-    } catch (err) {
-      const wait = Math.min(2 ** attempt * 1000, MAX_CREATE_BACKOFF_MS);
-      say.warn(`Could not create ${item.name ?? "tunnel"} (${(err as Error).message}) — retrying in ${wait / 1000}s`);
-      await sleep(wait);
-    }
-  }
-}
-
-async function freshMetricsPort(): Promise<number | undefined> {
-  try {
-    return await pickFreePort();
-  } catch {
-    return undefined;
-  }
-}
+const SIGNALS = ["SIGINT", "SIGHUP", "SIGTERM"] as const;
 
 /**
- * Create + connect a batch of tunnels. Under interactive mode, any exit
- * releases tunnels (2-state model). Under `--keep-alive`, exit stops only local
- * connectors, and the watchdog supervises connector reconnection.
+ * CLI lifecycle around {@link provisionTunnels}. Under interactive mode, any
+ * exit releases tunnels (2-state model). Under `--keep-alive`, exit stops only
+ * local connectors, and the watchdog supervises connector reconnection. A
+ * signal while tunnels are still being created aborts the batch, which then
+ * releases whatever was already created.
  */
 export async function startTunnels(
   cf: Cf,
@@ -81,27 +27,18 @@ export async function startTunnels(
   items: CreateOptions[],
   opts: { detach?: boolean; protocol?: TransportProtocol; keepAlive?: boolean } = {},
 ): Promise<void> {
-  const started: StartedTunnel[] = [];
+  let session: TunnelSession | undefined;
   let tornDown = false;
   const supervised = !!opts.keepAlive && !opts.detach;
+  const abort = new AbortController();
 
   const teardownAll = async (code: number): Promise<void> => {
     if (tornDown) return;
     tornDown = true;
     stopAllWatchdogs();
     try {
-      for (const s of started) {
-        if (opts.keepAlive) {
-          // The watchdog may have replaced the connector since start; the
-          // registry holds the current pid (stopConnector re-verifies it).
-          const current = getEntry(s.fqdn);
-          await stopConnector(current?.pid ? current : ({ pid: s.pid, bootId: currentBootId() } as never));
-        } else {
-          try { await removeTunnelSubdomain(cf, s.fqdn, { force: true, quiet: true }); }
-          catch { /* best-effort release */ }
-        }
-      }
-      if (process.stdout.isTTY && !opts.keepAlive) outro(`Stopped · released ${started.length} subdomain(s)`);
+      await session?.release();
+      if (process.stdout.isTTY && !opts.keepAlive) outro(`Stopped · released ${session?.tunnels.length ?? 0} subdomain(s)`);
     } catch (err) {
       reportError(err);
     } finally {
@@ -109,59 +46,61 @@ export async function startTunnels(
     }
   };
 
-  // One process per hostname: a second supervisor would recreate the hostname
-  // and delete the tunnel this one serves.
-  for (const item of items) {
-    const fqdn = knownFqdn(item);
-    if (!fqdn) continue;
-    if (opts.detach) await assertHostnameFree(fqdn);
-    else await acquireHostnameLock(fqdn, { waitMs: opts.keepAlive ? LOCK_WAIT_MS : 0 });
-  }
+  // While provisioning: the first signal aborts (the provisioner unwinds what
+  // it created), a second one exits right away. Afterwards: release + exit.
+  const onSignal = (): void => {
+    if (session) return void teardownAll(0);
+    if (abort.signal.aborted) process.exit(130);
+    abort.abort(new CliError("Cancelled.", { exitCode: 130 }));
+  };
+  for (const sig of SIGNALS) process.on(sig, onSignal);
 
   const spin = spinner();
-  spin.start(items.length > 1 ? "Creating tunnels…" : "Creating tunnel…");
-  for (const item of items) {
-    spin.message(`Creating ${item.name ?? "tunnel"} (:${item.port})…`);
-    const result = await createWithBootRetry(cf, item, opts.keepAlive);
-    const fqdn = result.host.hostname;
-    const logFile = logFileFor(fqdn);
-    const knownPort = await freshMetricsPort();
-    const conn = startConnector({
-      bin, token: result.token, detach: !!opts.detach, logFile, protocol: opts.protocol, metricsPort: knownPort,
-      onExit: opts.detach ? undefined : (code) => {
+  let spinning = false;
+  try {
+    session = await provisionTunnels(cf, bin, items, {
+      detach: opts.detach,
+      protocol: opts.protocol,
+      keepAlive: opts.keepAlive,
+      createdBy: "cli",
+      signal: abort.signal,
+      onLockLost: () => process.exit(1), // two supervisors would delete each other's tunnel
+      onProgress: (m) => {
+        if (spinning) spin.message(m);
+        else { spin.start(m); spinning = true; }
+      },
+      onConnectorExit: (fqdn, code) => {
         if (tornDown) return;
         if (opts.keepAlive) {
           void notifyConnectorExited(fqdn); // supervised: restart, never release
+          return;
+        }
+        if (!session) {
+          abort.abort(new CliError(`Connector for ${fqdn} exited.`));
           return;
         }
         say.warn(`Connector for ${fqdn} exited.`);
         void teardownAll(code ?? 1);
       },
     });
+  } catch (err) {
+    for (const sig of SIGNALS) process.off(sig, onSignal);
+    if (spinning) spin.stop("Stopped");
+    throw err;
+  }
+  const started = session.tunnels;
 
-    let metricsPort = knownPort;
-    if (!metricsPort) {
-      await sleep(600);
-      if (existsSync(logFile)) {
-        try { metricsPort = extractMetricsPort(readFileSync(logFile, "utf8")); } catch { /* ignore */ }
-      }
-    }
-
-    await markConnectorRunning(fqdn, { pid: conn.pid, bootId: currentBootId(), logFile, metricsPort, protocol: opts.protocol });
-    started.push({
-      fqdn, subdomain: result.host.subdomain, tunnelId: result.tunnelId,
-      target: serviceUrl(item.proto, item.host ?? "localhost", item.port), pid: conn.pid,
-    });
-
-    if (supervised) {
+  if (supervised) {
+    for (const t of started) {
       startTunnelWatchdog({
-        cf, bin, fqdn, tunnelId: result.tunnelId, token: result.token, logFile,
-        item, pid: conn.pid, metricsPort, protocol: opts.protocol,
+        cf, bin, fqdn: t.fqdn, tunnelId: t.tunnelId, token: t.token, logFile: t.logFile,
+        item: t.item, pid: t.pid, metricsPort: t.metricsPort, protocol: opts.protocol,
       });
     }
   }
 
   if (opts.detach) {
+    for (const sig of SIGNALS) process.off(sig, onSignal);
     spin.stop(`${started.length} tunnel(s) started in the background`);
     const lines = started.map((s) => `${formatRoute(s.fqdn, s.target)}  ${dim(`pid ${s.pid}`)}`);
     note(lines.join("\n"), "running in background");
@@ -169,9 +108,6 @@ export async function startTunnels(
     return;
   }
 
-  for (const sig of ["SIGINT", "SIGHUP", "SIGTERM"] as const) {
-    process.on(sig, () => void teardownAll(0));
-  }
   if (supervised) watchForUpgrade(() => void teardownAll(UPGRADE_RESTART_EXIT_CODE));
 
   spin.message("Connecting to the Cloudflare edge…");

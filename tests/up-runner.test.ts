@@ -15,7 +15,7 @@ vi.mock("../src/connector/registry.js", () => ({
 }));
 
 vi.mock("../src/connector/hostname-lock.js", () => ({
-  acquireHostnameLock: vi.fn(async () => {}),
+  acquireHostnameLock: vi.fn(async () => async () => {}),
   assertHostnameFree: vi.fn(async () => {}),
 }));
 
@@ -87,7 +87,7 @@ describe("up-runner", () => {
     await startTunnels({ token: "t", accountId: "a" }, "cloudflared", [{ port: 8080, proto: "http", name: "web", zone: "example.com" }]);
 
     expect(startTunnelWatchdog).not.toHaveBeenCalled();
-    expect(acquireHostnameLock).toHaveBeenCalledWith("web.example.com", { waitMs: 0 });
+    expect(acquireHostnameLock).toHaveBeenCalledWith("web.example.com", expect.objectContaining({ waitMs: 0 }));
   });
 
   it("supervised runs reuse the tunnel, pin the metrics port and mark the connector running", async () => {
@@ -102,7 +102,7 @@ describe("up-runner", () => {
     expect(createTunnelSubdomain).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reuse: true }));
     expect(startConnector).toHaveBeenCalledWith(expect.objectContaining({ metricsPort: 20241 }));
     expect(markConnectorRunning).toHaveBeenCalledWith("web.example.com", expect.objectContaining({ pid: 12345, metricsPort: 20241 }));
-    expect(acquireHostnameLock).toHaveBeenCalledWith("web.example.com", { waitMs: 30_000 });
+    expect(acquireHostnameLock).toHaveBeenCalledWith("web.example.com", expect.objectContaining({ waitMs: 30_000 }));
   });
 
   it("supervised runs retry creation instead of exiting when the API is unreachable", async () => {
