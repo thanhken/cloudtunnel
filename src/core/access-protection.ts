@@ -3,7 +3,7 @@ import {
   ACCESS_APP_EXISTS, accessAppBody, createAccessApp, createOtpIdp, deleteAccessApp, findAccessApp,
   getAccessOrg, isManagedAccessApp, listIdps, updateAccessApp, type AccessApp,
 } from "../cloudflare/access.js";
-import { ACCESS_SCOPES, tokenCreateUrl } from "../config/token-url.js";
+import { tokenCreateUrl } from "../config/token-url.js";
 import { CliError } from "../ui/errors.js";
 import { confirm, say } from "../ui/output.js";
 import { accessIncludes } from "./protect-spec.js";
@@ -14,7 +14,13 @@ const ZERO_TRUST_URL = "https://one.dash.cloudflare.com/";
 function scopeError(): CliError {
   return new CliError("Your Cloudflare token can't manage Cloudflare Access (needed for --protect).", {
     status: 403,
-    hint: `add ${ACCESS_SCOPES.join(" and ")} to your token, or create one with everything pre-selected: ${tokenCreateUrl({ access: true })} — then run \`cloudtunnel login\``,
+    // Multi-line, URL last and alone on its line: a long URL followed by more
+    // text is easily only half-selected / half-clicked in a terminal.
+    hint: [
+      "create a token with the right permissions, then run `cloudtunnel login`:",
+      `    ${tokenCreateUrl({ access: true })}`,
+      '    (or add the two "Access … · Edit" permissions to your current token)',
+    ].join("\n"),
   });
 }
 

@@ -80,7 +80,7 @@ describe("ensureAccessApp", () => {
     vi.mocked(access.findAccessApp).mockRejectedValueOnce(new CliError("forbidden", { status: 403 }));
     const err = await ensureAccessApp(cf, fqdn, ["a@x.com"], { interactive: false }).catch((e) => e);
     expect(err.message).toMatch(/can't manage Cloudflare Access/);
-    expect(err.hint).toMatch(/Access: Apps and Policies/);
+    expect(err.hint).toMatch(/cloudtunnel login/);
     expect(err.hint).toMatch(/access_acct/);
   });
 
