@@ -3,7 +3,7 @@ import { resolveZone } from "../cloudflare/zones.js";
 import { deleteTunnelWithConnections, getTunnel, isManagedTunnel, listTunnels } from "../cloudflare/tunnels.js";
 import { deleteDnsRecord, findCname, isManagedDns } from "../cloudflare/dns.js";
 import type { DnsRecord, Tunnel as CfTunnel } from "../cloudflare/types.js";
-import type { Tunnel } from "./tunnel-types.js";
+import type { Tunnel, TunnelState } from "./tunnel-types.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { entryFqdn, getEntry, isOwnerAlive, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
@@ -147,6 +147,36 @@ export async function removeTunnelById(cf: Cf, tunnel: CfTunnel, opts: RemoveOpt
   if (!opts.quiet) say.ok(`Released tunnel ${tunnel.id}`);
 }
 
+/** Map a registry entry to the public {@link Tunnel} contract. */
+function entryToTunnel(e: RegistryEntry, state: TunnelState, serviceIssue: string | null): Tunnel {
+  const fqdn = entryFqdn(e);
+  return {
+    num: e.index ?? null,
+    url: `https://${fqdn}`,
+    fqdn,
+    target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
+    protocol: e.protocol ?? "auto",
+    state,
+    service: serviceState(fqdn),
+    serviceIssue,
+    pid: e.state === "running" && e.pid ? e.pid : null,
+    managed: true,
+    expiresAt: e.expiresAt ?? null,
+    protected: e.protectedFor ?? null,
+    createdBy: e.createdBy ?? null,
+  };
+}
+
+/** Tracked tunnels for the given hostnames from the local registry only (no
+ * network, no probes). State is the registry's view: a just-started connector
+ * reports "reconnecting" until a probe confirms it. Used as the fallback when
+ * the full `listAll` fails right after tunnels were started. */
+export function registryTunnels(fqdns: string[]): Tunnel[] {
+  return listEntries()
+    .filter((e) => fqdns.includes(entryFqdn(e)))
+    .map((e) => entryToTunnel(e, e.state === "running" ? "reconnecting" : e.state === "provisioning" ? "provisioning" : "down", null));
+}
+
 /** Reconcile + list tracked subdomains as typed {@link Tunnel}s. PROTOCOL is the
  * cloudflared edge transport the connector was started with (absent = "auto",
  * cloudflared's default). SERVICE is the per-subdomain boot service's state.
@@ -156,23 +186,9 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<Tun
   const tunnels = new Map((await listTunnels(cf)).map((t) => [t.id, t]));
   const issues = serviceIssuesByFqdn();
   const rows: Tunnel[] = await Promise.all(entries.map(async (e): Promise<Tunnel> => {
-    const fqdn = entryFqdn(e);
     const gone = e.tunnelId ? !tunnels.has(e.tunnelId) : false;
-    return {
-      num: e.index ?? null,
-      url: `https://${fqdn}`,
-      fqdn,
-      target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
-      protocol: e.protocol ?? "auto",
-      state: isOwnerAlive(e) ? await probeEntryState(e, gone) : "orphaned",
-      service: serviceState(fqdn),
-      serviceIssue: issues.get(fqdn) ?? null,
-      pid: e.state === "running" && e.pid ? e.pid : null,
-      managed: true,
-      expiresAt: e.expiresAt ?? null,
-      protected: e.protectedFor ?? null,
-      createdBy: e.createdBy ?? null,
-    };
+    const state = isOwnerAlive(e) ? await probeEntryState(e, gone) : "orphaned";
+    return entryToTunnel(e, state, issues.get(entryFqdn(e)) ?? null);
   }));
   if (opts.all) {
     const { listCargoCnames } = await import("../cloudflare/dns.js");

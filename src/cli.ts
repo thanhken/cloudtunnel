@@ -1,8 +1,9 @@
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { createRequire } from "node:module";
 import pc from "picocolors";
 import { reportError } from "./ui/errors.js";
-import { isInteractive } from "./ui/output.js";
+import { isInteractive, setOutputSink, stderrSink } from "./ui/output.js";
+import { jsonErrorPayload, wantsJson } from "./ui/json-output.js";
 import { migrateLegacyProfiles } from "./config/legacy-migrate.js";
 import { configureProxy } from "./config/proxy.js";
 
@@ -12,13 +13,19 @@ import { registerLs } from "./commands/ls.js";
 import { registerDelete } from "./commands/delete.js";
 import { registerLogs } from "./commands/logs.js";
 import { registerService } from "./commands/service.js";
+import { registerUrl } from "./commands/url.js";
 import { maybeRepairServicesAfterUpgrade } from "./core/service-upgrade-check.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
 
-export function buildProgram(): Command {
+export function buildProgram(opts: { json?: boolean } = {}): Command {
   const program = new Command();
+  // Throw instead of process.exit on usage errors / help / version, so main()
+  // decides the rendering (JSON in --json mode). Inherited by subcommands
+  // registered below. In --json mode commander's own error text is suppressed.
+  program.exitOverride();
+  if (opts.json) program.configureOutput({ writeErr: () => {} });
   program
     .name("cloudtunnel")
     .description("Expose local ports at HTTPS subdomains on your own Cloudflare domains.")
@@ -37,7 +44,7 @@ export function buildProgram(): Command {
     ].join("\n"),
   );
 
-  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerService]) {
+  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerUrl, registerService]) {
     register(program);
   }
   return program;
@@ -54,6 +61,15 @@ function shouldMigrate(argv: string[]): boolean {
 
 /** CLI entry: proxy, one-time migrations, then parse argv. */
 export async function main(): Promise<void> {
+  // --json: stdout carries exactly one JSON result; all human output → stderr.
+  // Set before anything runs so pre-command prompts/migrations stay quiet.
+  const json = wantsJson(process.argv);
+  if (json) setOutputSink(stderrSink);
+  // `ctun --json ls` would otherwise dispatch to the default `up` command.
+  if (process.argv[2] === "--json") {
+    process.argv.splice(2, 1);
+    process.argv.push("--json");
+  }
   // Route fetch through a proxy if one is configured (Node's fetch ignores
   // proxies by default → UND_ERR_CONNECT_TIMEOUT behind a corporate proxy).
   configureProxy();
@@ -62,10 +78,23 @@ export async function main(): Promise<void> {
   // After an upgrade, offer to bring boot services written by older versions
   // (or left down by them) back up — once per version, interactive only.
   await maybeRepairServicesAfterUpgrade(pkg.version, process.argv);
-  const program = buildProgram();
+  const program = buildProgram({ json });
   try {
     await program.parseAsync(process.argv);
   } catch (err) {
-    process.exitCode = reportError(err);
+    process.exitCode = handleCliError(err, json);
   }
+}
+
+/** Render a failed run and return its exit code. Commander already printed
+ * its own usage error (or the help / version text, exit 0) in human mode. */
+export function handleCliError(err: unknown, json: boolean): number {
+  if (err instanceof CommanderError && err.exitCode === 0) return 0;
+  if (json) {
+    const payload = jsonErrorPayload(err);
+    process.stderr.write(`${JSON.stringify(payload)}\n`);
+    return payload.exitCode;
+  }
+  if (err instanceof CommanderError) return err.exitCode;
+  return reportError(err);
 }

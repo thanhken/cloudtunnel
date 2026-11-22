@@ -2,6 +2,8 @@ import type { Command } from "commander";
 import { CliError } from "../ui/errors.js";
 import { intro, isInteractive, promptText, say } from "../ui/output.js";
 import { printLsTable } from "../ui/ls-table.js";
+import { emitJson, tunnelsPayload } from "../ui/json-output.js";
+import type { Tunnel } from "../core/tunnel-types.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { ensureCloudflared } from "../connector/binary.js";
@@ -9,7 +11,7 @@ import { checkLocalReady } from "../connector/health.js";
 import type { CreateOptions } from "../core/orchestrator-create.js";
 import { startTunnels } from "../core/up-runner.js";
 import { resolveDomain } from "../core/resolve-domain.js";
-import { listAll, reapOrphans } from "../core/orchestrator-manage.js";
+import { listAll, reapOrphans, registryTunnels } from "../core/orchestrator-manage.js";
 import { getEntry, isOurConnector, patchEntry } from "../connector/registry.js";
 import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
 import { parseTransportProtocol, type TransportProtocol } from "../core/transport-protocol.js";
@@ -25,6 +27,7 @@ interface UpOptions {
   service?: boolean; // register each subdomain as a systemd boot service
   force?: boolean;
   yes?: boolean;
+  json?: boolean;
 }
 
 /** Interactive port prompt (0-arg wizard). */
@@ -54,6 +57,12 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   const protocol: TransportProtocol | undefined = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
   // Parse specs up front (fail fast on a typo before touching the network). 0 args
   // → wizard, which needs a TTY.
+  if (opts.json && !opts.detach && !opts.service) {
+    throw new CliError("--json needs --detach or --service.", {
+      exitCode: 2,
+      hint: "a foreground run never finishes; scripts/agents should use --detach (or the Node API / MCP)",
+    });
+  }
   const parsed: TunnelSpec[] | null = specArgs.length ? specArgs.map(parseTunnelSpec) : null;
   if (parsed === null && !isInteractive()) {
     throw new CliError("No tunnel spec given.", { hint: "e.g. cloudtunnel api:8080" });
@@ -85,11 +94,30 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   }
 
   if (opts.service) {
-    await registerServices(cf, items, domain, opts.proto, protocol);
+    const { fqdns, notUp } = await registerServices(cf, items, domain, opts.proto, protocol, !opts.json);
+    if (opts.json) {
+      const failed = notUp.map((fqdn) => ({ fqdn, error: `service didn't report up within ${SERVICE_UP_TIMEOUT_MS / 1000}s` }));
+      emitJson(tunnelsPayload(await startedTunnels(cf, fqdns), { failed }));
+      if (failed.length) process.exitCode = 1;
+    }
     return;
   }
 
-  await startTunnels(cf, bin, items, { detach: opts.detach, protocol, keepAlive: opts.keepAlive });
+  const fqdns = await startTunnels(cf, bin, items, { detach: opts.detach, protocol, keepAlive: opts.keepAlive });
+  if (opts.json) emitJson(tunnelsPayload(await startedTunnels(cf, fqdns), { failed: [] }));
+}
+
+/** The just-started tunnels for `--json`. They are already live, so a failing
+ * status lookup must not turn into an error (an agent would retry and hit
+ * "hostname in use", losing track of a running tunnel): fall back to the
+ * registry view. */
+async function startedTunnels(cf: Cf, fqdns: string[]): Promise<Tunnel[]> {
+  try {
+    return (await listAll(cf)).filter((t) => fqdns.includes(t.fqdn));
+  } catch (err) {
+    say.warn(`Started, but could not refresh status (${(err as Error).message}).`);
+    return registryTunnels(fqdns);
+  }
 }
 
 /** How long `--service` waits for the boot services to bring their connectors up
@@ -106,8 +134,8 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  */
 async function registerServices(
   cf: Cf, items: CreateOptions[], domain: string,
-  proto: "http" | "https", protocol?: TransportProtocol,
-): Promise<void> {
+  proto: "http" | "https", protocol?: TransportProtocol, render = true,
+): Promise<{ fqdns: string[]; notUp: string[] }> {
   assertServiceSupported();
   if (!protocol) {
     say.warn("No edge protocol set — cloudflared will pick QUIC, which some networks drop.");
@@ -125,6 +153,7 @@ async function registerServices(
 
   const notUp = await waitServicesUp(fqdns, SERVICE_UP_TIMEOUT_MS);
 
+  if (!render) return { fqdns, notUp };
   const rows = await listAll(cf);
   if (rows.length) printLsTable(rows);
   // A service that never reports up either failed to start or resolved a
@@ -134,6 +163,7 @@ async function registerServices(
     for (const fqdn of notUp) say.dim(`  ${fqdn} → ${serviceLogsHint(fqdn)}`);
   }
   say.dim("  → manage: cloudtunnel ls   ·   remove: cloudtunnel delete <#>");
+  return { fqdns, notUp };
 }
 
 /** Poll the registry until every fqdn's service has a live, edge-ready connector,
@@ -177,5 +207,6 @@ export function registerUp(program: Command): void {
     .option("--service", "register each subdomain as a boot service (Linux systemd · macOS launchd · Windows Task Scheduler)")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't prompt; don't ask before replacing an existing record")
+    .option("--json", "with --detach/--service: print {schemaVersion, tunnels} on stdout")
     .action((specs: string[], opts: UpOptions) => runUp(specs, opts));
 }

@@ -26,7 +26,7 @@ export async function startTunnels(
   bin: string,
   items: CreateOptions[],
   opts: { detach?: boolean; protocol?: TransportProtocol; keepAlive?: boolean } = {},
-): Promise<void> {
+): Promise<string[]> {
   let session: TunnelSession | undefined;
   let tornDown = false;
   const supervised = !!opts.keepAlive && !opts.detach;
@@ -105,7 +105,7 @@ export async function startTunnels(
     const lines = started.map((s) => `${formatRoute(s.fqdn, s.target)}  ${dim(`pid ${s.pid}`)}`);
     note(lines.join("\n"), "running in background");
     if (process.stdout.isTTY) outro("Stop with: cloudtunnel delete <#|--all>");
-    return;
+    return started.map((t) => t.fqdn);
   }
 
   if (supervised) watchForUpgrade(() => void teardownAll(UPGRADE_RESTART_EXIT_CODE));
@@ -118,6 +118,7 @@ export async function startTunnels(
   const lines = started.map((s, i) => `${formatRoute(s.fqdn, s.target)}${healths[i] === "healthy" ? "" : dim(`  (${healths[i]})`)}`);
   note(lines.join("\n"), `${live}/${started.length} live`);
   say.dim(opts.keepAlive ? "Service running with auto-heal watchdog." : "Ctrl-C stops and releases them.");
+  return started.map((t) => t.fqdn);
 }
 
 /** A supervised run notices an `npm i -g` upgrade and exits so its boot service
