@@ -1,7 +1,8 @@
 import type { Command } from "commander";
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, watch } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync, watch } from "node:fs";
 import { CliError } from "../ui/errors.js";
-import { say } from "../ui/output.js";
+import { say, writeRaw } from "../ui/output.js";
+import { readLogTail } from "../connector/log-tail.js";
 import { resolveTarget } from "../core/orchestrator-manage.js";
 
 interface LogsOptions {
@@ -11,9 +12,7 @@ interface LogsOptions {
 
 /** Print the last `n` lines of a file; return the file's byte size (follow start). */
 function printTail(file: string, n: number): number {
-  const lines = readFileSync(file, "utf8").split("\n");
-  const tail = lines.slice(-n).join("\n");
-  process.stdout.write(tail.endsWith("\n") ? tail : `${tail}\n`);
+  writeRaw(readLogTail(file, n));
   return statSync(file).size;
 }
 
@@ -32,7 +31,7 @@ function follow(file: string, fromPos: number): void {
       const buf = Buffer.alloc(size - pos);
       readSync(fd, buf, 0, size - pos, pos);
       closeSync(fd);
-      process.stdout.write(buf.toString("utf8"));
+      writeRaw(buf.toString("utf8"));
       pos = size;
     }
   });

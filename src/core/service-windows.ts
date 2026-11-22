@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { schemaMarker, schemaOf, serviceSlug, unxml, type InstalledDefinition, type ServiceDescriptor, type ServiceState } from "./service-exec.js";
+import { childStdio } from "../ui/output.js";
 
 /** Task Scheduler path: a task named by the fqdn slug under a `cloudtunnel` folder. */
 export const label = (fqdn: string): string => `cloudtunnel\\${serviceSlug(fqdn)}`;
@@ -60,7 +61,7 @@ export function install(d: ServiceDescriptor): void {
   // schtasks /XML wants a UTF-16 file with a BOM.
   writeFileSync(file, "﻿" + buildTaskXml(d), { encoding: "utf16le" });
   schtasks(["/End", "/TN", name]); // best-effort: stop existing instance before re-creating
-  execFileSync("schtasks", ["/Create", "/TN", name, "/XML", file, "/F"], { stdio: "inherit" });
+  execFileSync("schtasks", ["/Create", "/TN", name, "/XML", file, "/F"], { stdio: childStdio() });
   schtasks(["/Run", "/TN", name]); // start now
 }
 

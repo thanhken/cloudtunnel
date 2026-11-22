@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CliError } from "../ui/errors.js";
 import { schemaMarker, schemaOf, serviceSlug, type InstalledDefinition, type ServiceDescriptor, type ServiceState } from "./service-exec.js";
+import { childStdio } from "../ui/output.js";
 
 const UNIT_DIR = "/etc/systemd/system";
 export const label = (fqdn: string): string => `cloudtunnel-${serviceSlug(fqdn)}.service`;
@@ -49,7 +50,7 @@ export function buildUnit(d: ServiceDescriptor): string {
 function privileged(args: string[]): void {
   const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
   const argv = isRoot ? args : ["sudo", ...args];
-  execFileSync(argv[0]!, argv.slice(1), { stdio: "inherit" });
+  execFileSync(argv[0]!, argv.slice(1), { stdio: childStdio() });
 }
 
 /** Read-only systemctl query; returns trimmed stdout ("" on any error). */
@@ -101,7 +102,7 @@ export function uninstallLabel(name: string): void {
 /** Cache sudo credentials once before a batch of unit changes (TTY prompt). */
 export function prepareChanges(): void {
   const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-  if (!isRoot) execFileSync("sudo", ["-v"], { stdio: "inherit" });
+  if (!isRoot) execFileSync("sudo", ["-v"], { stdio: childStdio() });
 }
 
 /** Parse one unit file's text into an installed definition (pure — unit-tested). */

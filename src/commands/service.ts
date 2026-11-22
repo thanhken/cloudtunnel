@@ -17,7 +17,7 @@ export async function repairWithPrompt(actions: RepairAction[], opts: { yes?: bo
   for (const a of actions) say.dim(`  ${describeAction(a)}`);
   if (opts.dryRun) return false;
   const needsSudo = process.platform === "linux" ? " (uses sudo)" : "";
-  if (!opts.yes && !(await confirm(`Repair ${actions.length} boot service(s) now?${needsSudo}`))) return false;
+  if (!opts.yes && !(await confirm(`Repair ${actions.length} boot service(s) now?${needsSudo}`, "pass -y to repair without asking"))) return false;
   const res = runRepair(actions);
   for (const fqdn of res.fixed) say.ok(`Repaired ${fqdn}`);
   for (const f of res.failed) say.warn(`Could not repair ${f.fqdn}: ${f.error}`);

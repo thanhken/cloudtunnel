@@ -1,5 +1,5 @@
 import { loadConfig, saveConfig } from "../config/store.js";
-import { say } from "../ui/output.js";
+import { isInteractive, say } from "../ui/output.js";
 import { inventoryServices, planRepair } from "./service-inventory.js";
 import { repairWithPrompt } from "../commands/service.js";
 
@@ -19,7 +19,7 @@ function remember(version: string): void {
  * never prompt). Best-effort: a failure here never blocks the command.
  */
 export async function maybeRepairServicesAfterUpgrade(version: string, argv: string[]): Promise<void> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return;
+  if (!isInteractive() || !process.stdout.isTTY) return;
   const rest = argv.slice(2);
   // `service` repairs itself; `delete` is removing services — don't offer to restart them.
   if (rest[0] === "service" || rest[0] === "delete" || rest.some((a) => INFO_ARGS.has(a))) return;

@@ -1,8 +1,7 @@
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
-import * as clack from "@clack/prompts";
 import { reportError } from "../ui/errors.js";
-import { dim, formatRoute, say } from "../ui/output.js";
+import { dim, formatRoute, note, outro, say, spinner } from "../ui/output.js";
 import type { Cf } from "../cloudflare/client.js";
 import { logDir } from "../config/paths.js";
 import { pickFreePort, startConnector, stopConnector } from "../connector/process.js";
@@ -102,7 +101,7 @@ export async function startTunnels(
           catch { /* best-effort release */ }
         }
       }
-      if (process.stdout.isTTY && !opts.keepAlive) clack.outro(`Stopped · released ${started.length} subdomain(s)`);
+      if (process.stdout.isTTY && !opts.keepAlive) outro(`Stopped · released ${started.length} subdomain(s)`);
     } catch (err) {
       reportError(err);
     } finally {
@@ -119,7 +118,7 @@ export async function startTunnels(
     else await acquireHostnameLock(fqdn, { waitMs: opts.keepAlive ? LOCK_WAIT_MS : 0 });
   }
 
-  const spin = clack.spinner();
+  const spin = spinner();
   spin.start(items.length > 1 ? "Creating tunnels…" : "Creating tunnel…");
   for (const item of items) {
     spin.message(`Creating ${item.name ?? "tunnel"} (:${item.port})…`);
@@ -165,8 +164,8 @@ export async function startTunnels(
   if (opts.detach) {
     spin.stop(`${started.length} tunnel(s) started in the background`);
     const lines = started.map((s) => `${formatRoute(s.fqdn, s.target)}  ${dim(`pid ${s.pid}`)}`);
-    clack.note(lines.join("\n"), "running in background");
-    if (process.stdout.isTTY) clack.outro("Stop with: cloudtunnel delete <#|--all>");
+    note(lines.join("\n"), "running in background");
+    if (process.stdout.isTTY) outro("Stop with: cloudtunnel delete <#|--all>");
     return;
   }
 
@@ -181,7 +180,7 @@ export async function startTunnels(
   spin.stop(`${started.length} tunnel(s) started`);
 
   const lines = started.map((s, i) => `${formatRoute(s.fqdn, s.target)}${healths[i] === "healthy" ? "" : dim(`  (${healths[i]})`)}`);
-  clack.note(lines.join("\n"), `${live}/${started.length} live`);
+  note(lines.join("\n"), `${live}/${started.length} live`);
   say.dim(opts.keepAlive ? "Service running with auto-heal watchdog." : "Ctrl-C stops and releases them.");
 }
 

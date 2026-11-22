@@ -54,7 +54,7 @@ async function acquireToken(opts: LoginOptions): Promise<{ token: string; fromEn
   const token = await clack.password({ message: "Paste your Cloudflare API token", mask: "•" });
   if (clack.isCancel(token) || !token) {
     clack.cancel("Cancelled.");
-    throw new CliError("Cancelled.", { exitCode: 130 });
+    throw new CliError("Cancelled.", { exitCode: 130, silent: true });
   }
   return { token, fromEnv: false };
 }

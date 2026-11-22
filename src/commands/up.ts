@@ -1,7 +1,7 @@
 import type { Command } from "commander";
-import * as clack from "@clack/prompts";
 import { CliError } from "../ui/errors.js";
-import { say, printTable } from "../ui/output.js";
+import { intro, isInteractive, promptText, say } from "../ui/output.js";
+import { printLsTable } from "../ui/ls-table.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf, type Cf } from "../cloudflare/client.js";
 import { ensureCloudflared } from "../connector/binary.js";
@@ -27,27 +27,17 @@ interface UpOptions {
   yes?: boolean;
 }
 
-function promptOrExit<T>(value: T | symbol): T {
-  if (clack.isCancel(value)) {
-    clack.cancel("Cancelled.");
-    process.exit(130);
-  }
-  return value as T;
-}
-
 /** Interactive port prompt (0-arg wizard). */
 async function promptPort(): Promise<number> {
-  const input = promptOrExit(
-    await clack.text({
-      message: "Port to expose",
-      placeholder: "e.g. 3000",
-      validate: (v) => {
-        const n = Number(v);
-        if (!Number.isInteger(n) || n < 1 || n > 65535) return "Enter a port 1–65535";
-        return undefined;
-      },
-    }),
-  );
+  const input = await promptText({
+    message: "Port to expose",
+    placeholder: "e.g. 3000",
+    validate: (v) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) return "Enter a port 1–65535";
+      return undefined;
+    },
+  });
   return Number(input);
 }
 
@@ -55,11 +45,9 @@ async function promptPort(): Promise<number> {
  * (TTY, blank = random) or random (non-TTY / `-y`). Returns undefined for random. */
 async function resolveSpecSubdomain(spec: TunnelSpec, opts: UpOptions): Promise<string | undefined> {
   if (spec.subdomain !== undefined) return spec.subdomain;
-  if (opts.yes || !process.stdin.isTTY) return undefined; // random
-  const input = promptOrExit(
-    await clack.text({ message: `Subdomain for :${spec.port}`, placeholder: "blank = random · @ = root domain" }),
-  );
-  return (input as string).trim() || undefined; // blank → random
+  if (opts.yes || !isInteractive()) return undefined; // random
+  const input = await promptText({ message: `Subdomain for :${spec.port}`, placeholder: "blank = random · @ = root domain" });
+  return input.trim() || undefined; // blank → random
 }
 
 async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
@@ -67,7 +55,7 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   // Parse specs up front (fail fast on a typo before touching the network). 0 args
   // → wizard, which needs a TTY.
   const parsed: TunnelSpec[] | null = specArgs.length ? specArgs.map(parseTunnelSpec) : null;
-  if (parsed === null && !process.stdin.isTTY) {
+  if (parsed === null && !isInteractive()) {
     throw new CliError("No tunnel spec given.", { hint: "e.g. cloudtunnel api:8080" });
   }
 
@@ -75,7 +63,7 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   const cf = resolveCf();
   const bin = await ensureCloudflared();
 
-  if (process.stdout.isTTY) clack.intro("cloudtunnel");
+  if (process.stdout.isTTY) intro("cloudtunnel");
 
   const specs: TunnelSpec[] = parsed ?? [{ port: await promptPort() }];
   const domain = await resolveDomain(cf, opts, creds);
@@ -134,12 +122,7 @@ async function registerServices(
   const notUp = await waitServicesUp(fqdns, SERVICE_UP_TIMEOUT_MS);
 
   const rows = await listAll(cf);
-  if (rows.length) {
-    printTable(
-      ["#", "URL", "TARGET", "PROTOCOL", "STATE", "SERVICE", "PID"],
-      rows.map((r) => [r.num, r.url, r.target, r.protocol, r.state, r.service, r.pid]),
-    );
-  }
+  if (rows.length) printLsTable(rows);
   // A service that never reports up either failed to start or resolved a
   // different config dir than this shell — point at its logs so it's not silent.
   if (notUp.length) {

@@ -1,0 +1,71 @@
+import { Command } from "commander";
+import { createRequire } from "node:module";
+import pc from "picocolors";
+import { reportError } from "./ui/errors.js";
+import { isInteractive } from "./ui/output.js";
+import { migrateLegacyProfiles } from "./config/legacy-migrate.js";
+import { configureProxy } from "./config/proxy.js";
+
+import { registerLogin } from "./commands/login.js";
+import { registerUp } from "./commands/up.js";
+import { registerLs } from "./commands/ls.js";
+import { registerDelete } from "./commands/delete.js";
+import { registerLogs } from "./commands/logs.js";
+import { registerService } from "./commands/service.js";
+import { maybeRepairServicesAfterUpgrade } from "./core/service-upgrade-check.js";
+
+const require = createRequire(import.meta.url);
+const pkg = require("../package.json") as { version: string };
+
+export function buildProgram(): Command {
+  const program = new Command();
+  program
+    .name("cloudtunnel")
+    .description("Expose local ports at HTTPS subdomains on your own Cloudflare domains.")
+    .version(pkg.version, "-v, --version")
+    .showHelpAfterError();
+
+  program.addHelpText(
+    "before",
+    [
+      pc.bold("Quickstart:"),
+      `  ${pc.cyan("cloudtunnel login")}       once — paste a token (or set CLOUDFLARE_API_TOKEN)`,
+      `  ${pc.cyan("cloudtunnel 8080")}        your local :8080 goes live at an HTTPS URL`,
+      `  ${pc.cyan("cloudtunnel api:8080")}    api.<domain> → localhost:8080`,
+      `  ${pc.cyan("cloudtunnel ls")}          list tunnels   ${pc.dim("·")}   ${pc.cyan("cloudtunnel delete <#>")}   remove one`,
+      "",
+    ].join("\n"),
+  );
+
+  for (const register of [registerLogin, registerUp, registerLs, registerDelete, registerLogs, registerService]) {
+    register(program);
+  }
+  return program;
+}
+
+/** Migrate legacy profiles only in a real terminal (systemd changes need an
+ * interactive sudo) and not for help/version, so scripts/CI stay quiet. */
+function shouldMigrate(argv: string[]): boolean {
+  if (!isInteractive() || !process.stdout.isTTY) return false;
+  const rest = argv.slice(2);
+  const infoFlag = new Set(["-h", "--help", "-v", "--version", "help"]);
+  return !rest.some((a) => infoFlag.has(a));
+}
+
+/** CLI entry: proxy, one-time migrations, then parse argv. */
+export async function main(): Promise<void> {
+  // Route fetch through a proxy if one is configured (Node's fetch ignores
+  // proxies by default → UND_ERR_CONNECT_TIMEOUT behind a corporate proxy).
+  configureProxy();
+  // One-time, best-effort upgrade from the old profile model.
+  if (shouldMigrate(process.argv)) await migrateLegacyProfiles();
+  // After an upgrade, offer to bring boot services written by older versions
+  // (or left down by them) back up — once per version, interactive only.
+  await maybeRepairServicesAfterUpgrade(pkg.version, process.argv);
+  const program = buildProgram();
+  try {
+    await program.parseAsync(process.argv);
+  } catch (err) {
+    process.exitCode = reportError(err);
+  }
+}

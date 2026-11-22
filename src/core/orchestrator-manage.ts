@@ -2,7 +2,8 @@ import type { Cf } from "../cloudflare/client.js";
 import { resolveZone } from "../cloudflare/zones.js";
 import { deleteTunnelWithConnections, getTunnel, isManagedTunnel, listTunnels } from "../cloudflare/tunnels.js";
 import { deleteDnsRecord, findCname, isManagedDns } from "../cloudflare/dns.js";
-import type { DnsRecord, Tunnel } from "../cloudflare/types.js";
+import type { DnsRecord, Tunnel as CfTunnel } from "../cloudflare/types.js";
+import type { Tunnel } from "./tunnel-types.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { entryFqdn, getEntry, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
@@ -66,7 +67,7 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
 
   if (entry) await stopConnector(entry);
   if (tunnelId) {
-    let tunnel: Tunnel | undefined;
+    let tunnel: CfTunnel | undefined;
     try {
       tunnel = await getTunnel(cf, tunnelId);
     } catch (err) {
@@ -98,7 +99,7 @@ export async function removeTunnelSubdomain(cf: Cf, target: string, opts: Remove
  * remotely — a mistyped name or `#` number must never match an account tunnel. */
 const TUNNEL_ID_PREFIX_RE = /^[0-9a-f][0-9a-f-]{5,}$/;
 
-export interface RemoteTarget { tunnel: Tunnel; fqdn?: string }
+export interface RemoteTarget { tunnel: CfTunnel; fqdn?: string }
 
 /** Resolve a target the registry doesn't know as a tunnel-id prefix on the
  * Cloudflare account (an untracked tunnel has no registry entry, so its id can
@@ -125,7 +126,7 @@ export async function resolveRemoteTarget(cf: Cf, target: string): Promise<Remot
 
 /** Release a tunnel that has no DNS record (an id-only target): same ownership
  * gate as the fqdn path, honors --dry-run. */
-export async function removeTunnelById(cf: Cf, tunnel: Tunnel, opts: RemoveOptions = {}): Promise<void> {
+export async function removeTunnelById(cf: Cf, tunnel: CfTunnel, opts: RemoveOptions = {}): Promise<void> {
   if (!isManagedTunnel(tunnel) && !opts.force) {
     throw new CliError(`Tunnel ${tunnel.id} is not managed by cloudtunnel.`, { hint: "pass --force to release it" });
   }
@@ -137,38 +138,31 @@ export async function removeTunnelById(cf: Cf, tunnel: Tunnel, opts: RemoveOptio
   if (!opts.quiet) say.ok(`Released tunnel ${tunnel.id}`);
 }
 
-export interface LsRow {
-  num: string; url: string; target: string; protocol: string; state: string; service: string; pid: string; managed: boolean;
-  /** Set when the boot service needs `cloudtunnel service repair`. */
-  serviceIssue?: string;
-}
-
-/** Reconcile + list tracked subdomains: `# | URL | TARGET | PROTOCOL | STATE | SERVICE | PID`.
- * PROTOCOL is the cloudflared edge transport the connector was started with
- * (absent = "auto", cloudflared's default). SERVICE is the per-subdomain systemd
- * unit's state ("-" when none). `all` also scans every zone for cfargotunnel
- * CNAMEs created outside cloudtunnel. */
-export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsRow[]> {
+/** Reconcile + list tracked subdomains as typed {@link Tunnel}s. PROTOCOL is the
+ * cloudflared edge transport the connector was started with (absent = "auto",
+ * cloudflared's default). SERVICE is the per-subdomain boot service's state.
+ * `all` also scans every zone for cfargotunnel CNAMEs created outside cloudtunnel. */
+export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<Tunnel[]> {
   const entries = await reconcile();
   const tunnels = new Map((await listTunnels(cf)).map((t) => [t.id, t]));
   const issues = serviceIssuesByFqdn();
-  const rows: LsRow[] = await Promise.all(entries.map(async (e) => {
+  const rows: Tunnel[] = await Promise.all(entries.map(async (e): Promise<Tunnel> => {
     const fqdn = entryFqdn(e);
     const gone = e.tunnelId ? !tunnels.has(e.tunnelId) : false;
-    const svc = serviceState(fqdn);
-    const state = await probeEntryState(e, gone);
-    const issue = issues.get(fqdn);
-    const svcLabel = svc === "none" ? "-" : svc;
     return {
-      num: e.index ? String(e.index) : "-",
+      num: e.index ?? null,
       url: `https://${fqdn}`,
+      fqdn,
       target: serviceUrl(e.proto, e.host ?? "localhost", e.port),
       protocol: e.protocol ?? "auto",
-      state,
-      service: issue ? `${svcLabel} (${issue})` : svcLabel,
-      pid: e.state === "running" && e.pid ? String(e.pid) : "-",
+      state: await probeEntryState(e, gone),
+      service: serviceState(fqdn),
+      serviceIssue: issues.get(fqdn) ?? null,
+      pid: e.state === "running" && e.pid ? e.pid : null,
       managed: true,
-      serviceIssue: issue,
+      expiresAt: null,
+      protected: null,
+      createdBy: null,
     };
   }));
   if (opts.all) {
@@ -189,7 +183,11 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<LsR
     const scan = new Map<number, ScannedUnmanaged>();
     for (const rec of unmanaged) {
       scan.set(next, { fqdn: rec.name, tunnelId: tunnelIdFromCname(rec.content) });
-      rows.push({ num: String(next), url: `https://${rec.name}`, target: "-", protocol: "-", state: "unmanaged", service: "-", pid: "-", managed: false });
+      rows.push({
+        num: next, url: `https://${rec.name}`, fqdn: rec.name, target: null, protocol: null,
+        state: "unmanaged", service: "none", serviceIssue: null, pid: null, managed: false,
+        expiresAt: null, protected: null, createdBy: null,
+      });
       next++;
     }
     saveUnmanagedScan(scan);

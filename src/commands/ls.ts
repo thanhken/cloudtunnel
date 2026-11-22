@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import { printTable, say } from "../ui/output.js";
+import { say } from "../ui/output.js";
+import { printLsTable } from "../ui/ls-table.js";
 import { ensureAuth } from "../config/ensure-auth.js";
 import { resolveCf } from "../cloudflare/client.js";
 import { listAll } from "../core/orchestrator-manage.js";
@@ -18,10 +19,7 @@ export function registerLs(program: Command): void {
         say.info("No tunnel subdomains yet. Create one: `cloudtunnel 3000`");
         return;
       }
-      printTable(
-        ["#", "URL", "TARGET", "PROTOCOL", "STATE", "SERVICE", "PID"],
-        rows.map((r) => [r.num, r.url, r.target, r.protocol, r.state, r.service, r.pid]),
-      );
+      printLsTable(rows);
       const needRepair = rows.filter((r) => r.serviceIssue).length;
       if (needRepair) say.warn(`${needRepair} boot service(s) need repair → cloudtunnel service repair`);
     });

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import os from "node:os";
 import { ensureDirs } from "../config/paths.js";
 import { schemaMarker, schemaOf, serviceSlug, unxml, type InstalledDefinition, type ServiceDescriptor, type ServiceState } from "./service-exec.js";
+import { childStdio } from "../ui/output.js";
 
 export const label = (fqdn: string): string => `com.cloudtunnel.${serviceSlug(fqdn)}`;
 const agentsDir = (): string => join(os.homedir(), "Library", "LaunchAgents");
@@ -81,7 +82,7 @@ export function install(d: ServiceDescriptor): void {
   waitUnloaded(label(d.fqdn));
   // Surface a load failure (e.g. run over SSH / no GUI session) instead of
   // reporting a false success — the plist is written but nothing started.
-  execFileSync("launchctl", ["load", "-w", plist], { stdio: "inherit" });
+  execFileSync("launchctl", ["load", "-w", plist], { stdio: childStdio() });
 }
 
 export function uninstall(fqdn: string): void {

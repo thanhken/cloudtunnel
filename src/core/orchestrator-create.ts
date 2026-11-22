@@ -18,7 +18,7 @@ import { resolveHostSpec, type HostSpec } from "./slug.js";
 import { currentBootId, getEntry, patchEntry, removeEntry, upsertEntry } from "../connector/registry.js";
 import { stopConnector } from "../connector/process.js";
 import { CliError } from "../ui/errors.js";
-import { confirm, say } from "../ui/output.js";
+import { confirm, isInteractive, say } from "../ui/output.js";
 
 export interface CreateOptions {
   port: number;
@@ -66,7 +66,7 @@ export async function createTunnelSubdomain(cf: Cf, opts: CreateOptions): Promis
         hint: "pick another --subdomain/--hostname, or pass -f/--force to replace it",
       });
     }
-    if (!opts.force && !opts.yes && process.stdin.isTTY) {
+    if (!opts.force && !opts.yes && isInteractive()) {
       const kind = isTunnelRecord ? "tunnel" : "DNS";
       if (!(await confirm(`${host.hostname} already has a ${kind} record. Replace it?`))) {
         throw new CliError("Cancelled.", { exitCode: 130 });

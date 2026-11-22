@@ -1,5 +1,5 @@
 import { CliError } from "../ui/errors.js";
-import { say } from "../ui/output.js";
+import { isInteractive, say } from "../ui/output.js";
 import { getCredentials, type Credentials } from "./store.js";
 import { runLoginFlow } from "../commands/login.js";
 
@@ -12,7 +12,7 @@ export async function ensureAuth(): Promise<Credentials> {
   try {
     return getCredentials();
   } catch (err) {
-    if (err instanceof CliError && process.stdin.isTTY) {
+    if (err instanceof CliError && isInteractive()) {
       say.info("Welcome to cloudtunnel — let's get you connected to Cloudflare first.");
       await runLoginFlow();
       return getCredentials();

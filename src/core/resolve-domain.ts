@@ -1,5 +1,5 @@
 import { CliError } from "../ui/errors.js";
-import { selectOne } from "../ui/output.js";
+import { isInteractive, selectOne } from "../ui/output.js";
 import type { Cf } from "../cloudflare/client.js";
 import { listZones } from "../cloudflare/zones.js";
 import type { Credentials } from "../config/store.js";
@@ -11,7 +11,7 @@ export async function resolveDomain(cf: Cf, opts: { domain?: string }, creds: Cr
   const zones = await listZones(cf.token);
   if (zones.length === 0) throw new CliError("No domains found in this Cloudflare account.");
   if (zones.length === 1) return zones[0]!.name;
-  if (process.stdin.isTTY) return (await selectOne("Choose a domain", zones, (z) => z.name)).name;
+  if (isInteractive()) return (await selectOne("Choose a domain", zones, (z) => z.name)).name;
   if (creds.defaultZone) return creds.defaultZone;
   throw new CliError("Multiple domains in this account — pick one.", { hint: "pass -d <domain>" });
 }

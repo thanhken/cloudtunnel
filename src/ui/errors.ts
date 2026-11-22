@@ -11,13 +11,17 @@ export class CliError extends Error {
   /** HTTP status when this wraps a Cloudflare API error (lets callers tell a
    * genuine 404 "already gone" from a transient failure). */
   readonly status?: number;
+  /** Already reported to the user (e.g. a prompt cancel that printed its own
+   * line) — `reportError` prints nothing and just returns the exit code. */
+  readonly silent: boolean;
 
-  constructor(message: string, opts: { exitCode?: number; hint?: string; status?: number } = {}) {
+  constructor(message: string, opts: { exitCode?: number; hint?: string; status?: number; silent?: boolean } = {}) {
     super(message);
     this.name = "CliError";
     this.exitCode = opts.exitCode ?? 1;
     this.hint = opts.hint;
     this.status = opts.status;
+    this.silent = opts.silent ?? false;
   }
 }
 
@@ -37,6 +41,7 @@ export function fetchErrorReason(err: unknown): string {
  * rest print their message plus a note that it was unexpected. */
 export function reportError(err: unknown): number {
   if (err instanceof CliError) {
+    if (err.silent) return err.exitCode;
     console.error(pc.red(`✗ ${err.message}`));
     if (err.hint) console.error(pc.dim(`  → ${err.hint}`));
     return err.exitCode;

@@ -70,7 +70,7 @@ export async function checkLocalReady(
 export async function probeEntryState(
   entry: { state: string; pid?: number; metricsPort?: number },
   gone: boolean,
-): Promise<string> {
+): Promise<"up" | "reconnecting" | "down"> {
   if (gone || entry.state !== "running" || !entry.pid) return "down";
   if (!entry.metricsPort) return "up";
   const ready = await checkLocalReady(entry.metricsPort, { timeoutMs: 300 });
