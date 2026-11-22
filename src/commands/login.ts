@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import * as clack from "@clack/prompts";
 import { CliError } from "../ui/errors.js";
-import { redactToken, say, selectOne } from "../ui/output.js";
+import { redactToken, say, selectOne, writeRaw } from "../ui/output.js";
+import { terminalLink } from "../ui/terminal-link.js";
 import { configFile } from "../config/paths.js";
 import { loadConfig, saveConfig, type CloudtunnelConfig } from "../config/store.js";
 import { REQUIRED_SCOPES, openBrowser, tokenCreateUrl } from "../config/token-url.js";
@@ -40,17 +41,23 @@ async function acquireToken(opts: LoginOptions): Promise<{ token: string; fromEn
       hint: "pipe it: `printf %s $TOKEN | cloudtunnel login --token-stdin`",
     });
   }
+  const url = tokenCreateUrl();
   clack.note(
     [
-      "1. Click  Create Token → Create Custom Token  (Get started)",
-      "2. Under Permissions, add these four:",
+      "1. The token form opens with these permissions already selected:",
       ...REQUIRED_SCOPES.map((s) => `     • ${s}`),
+      "   (if any is missing, add it by hand)",
+      "2. Optionally narrow Account / Zone Resources to the ones you use",
       "3. Continue to summary → Create Token → copy it, then paste below",
     ].join("\n"),
     "Create a Cloudflare API token",
   );
-  openBrowser(tokenCreateUrl());
-  say.dim(`(opened ${tokenCreateUrl()})`);
+  openBrowser(url);
+  // URL alone on its own line: no wrapping punctuation a terminal could fold
+  // into the link, and an OSC 8 hyperlink where supported so a wrapped line
+  // still opens the full URL.
+  say.dim("Opened the token page in your browser. If it didn't open, use this link:");
+  writeRaw(`${terminalLink(url)}\n`);
   const token = await clack.password({ message: "Paste your Cloudflare API token", mask: "•" });
   if (clack.isCancel(token) || !token) {
     clack.cancel("Cancelled.");
