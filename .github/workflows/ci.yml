@@ -18,3 +18,6 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      # Install the real tarball into a clean project: bins run, the Node API
+      # imports with zero stdout output, and its types resolve for TS users.
+      - run: bash scripts/pack-smoke.sh

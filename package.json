@@ -3,6 +3,16 @@
   "version": "0.13.0",
   "description": "Manage Cloudflare Tunnels and subdomains account-wide from the CLI — instant HTTPS sharing on your own domains.",
   "type": "module",
+  "main": "./dist/api.js",
+  "types": "./dist/api.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js",
+      "default": "./dist/api.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "cloudtunnel": "dist/index.js",
     "ctun": "dist/index.js"

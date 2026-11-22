@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { ProxyAgent, setGlobalDispatcher } from "undici";
+import { Agent, Dispatcher, ProxyAgent, setGlobalDispatcher } from "undici";
 import { say } from "../ui/output.js";
 
 /** A proxy URL from the standard CLI env vars (upper- and lower-case). Works on
@@ -81,12 +81,78 @@ export function proxyFromSystem(): string | undefined {
  * proxy env vars → OS system proxy (best-effort). No proxy found ⇒ unchanged.
  */
 export function configureProxy(): void {
+  configured++;
   const proxy = proxyFromEnv() ?? proxyFromSystem();
   if (!proxy) return;
   try {
-    setGlobalDispatcher(new ProxyAgent(proxy));
+    setGlobalDispatcher(new BypassingProxyAgent(proxy, parseNoProxy(process.env.NO_PROXY ?? process.env.no_proxy)));
     say.debug(`[proxy] routing fetch through ${proxy}`);
   } catch {
     /* keep the default dispatcher — a direct attempt with a clear error beats a crash */
+  }
+}
+
+let configured = 0;
+/** Number of times proxy detection actually ran (tests). */
+export const proxyConfigureCount = (): number => configured;
+
+/** Node API: configure the proxy once, on first real use — never at import
+ * (it swaps the host app's global fetch dispatcher and may shell out). */
+export function ensureProxyConfigured(): void {
+  if (configured === 0) configureProxy();
+}
+
+// --- NO_PROXY handling ---
+
+export interface NoProxyRule { host: string; port?: string }
+
+/** Parse NO_PROXY: comma/space separated hosts, `.suffix` domains, `host:port`, `*`. */
+export function parseNoProxy(value: string | undefined): NoProxyRule[] {
+  return (value ?? "")
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .map((raw) => {
+      const m = /^(.*?)(?::(\d+))?$/.exec(raw.toLowerCase())!;
+      return { host: m[1]!.replace(/^\*?\./, "."), port: m[2] };
+    });
+}
+
+const LOOPBACK = /^(localhost|.*\.localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/;
+
+/** True when `hostname` must NOT go through the proxy: loopback always (a
+ * host app fetching its own local service), plus NO_PROXY entries. */
+export function bypassesProxy(hostname: string, rules: NoProxyRule[]): boolean {
+  const h = hostname.toLowerCase();
+  if (LOOPBACK.test(h)) return true;
+  return rules.some(({ host }) => {
+    if (host === "*") return true;
+    const bare = host.replace(/^\./, "");
+    return h === bare || h.endsWith(`.${bare}`);
+  });
+}
+
+/** Routes each origin through the proxy, except loopback / NO_PROXY hosts. */
+class BypassingProxyAgent extends Dispatcher {
+  readonly #direct = new Agent();
+  readonly #proxied: ProxyAgent;
+  readonly #rules: NoProxyRule[];
+
+  constructor(proxy: string, rules: NoProxyRule[]) {
+    super();
+    this.#proxied = new ProxyAgent(proxy);
+    this.#rules = rules;
+  }
+
+  override dispatch(opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandlers): boolean {
+    const hostname = new URL(String(opts.origin)).hostname;
+    return (bypassesProxy(hostname, this.#rules) ? this.#direct : this.#proxied).dispatch(opts, handler);
+  }
+
+  override async close(): Promise<void> {
+    await Promise.all([this.#direct.close(), this.#proxied.close()]);
+  }
+
+  override async destroy(): Promise<void> {
+    await Promise.all([this.#direct.destroy(), this.#proxied.destroy()]);
   }
 }
