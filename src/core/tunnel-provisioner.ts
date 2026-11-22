@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import type { Cf } from "../cloudflare/client.js";
 import { logDir } from "../config/paths.js";
 import { say } from "../ui/output.js";
+import { CliError } from "../ui/errors.js";
 import { pickFreePort, startConnector, stopConnector } from "../connector/process.js";
 import { extractMetricsPort } from "../connector/health.js";
 import { currentBootId, getEntry, markConnectorRunning } from "../connector/registry.js";
@@ -14,6 +15,7 @@ import { serviceUrl } from "./ingress.js";
 import { fqdnFor, serviceSlug } from "./service-exec.js";
 import type { TransportProtocol } from "./transport-protocol.js";
 import type { TunnelCreator } from "./tunnel-types.js";
+import { isExpired, TTL_CHECK_MS } from "./ttl.js";
 
 /** A tunnel this process created + connected (internal: carries the token). */
 export interface ProvisionedTunnel {
@@ -42,6 +44,12 @@ export interface ProvisionOptions {
   onLockLost?: OnLockLost;
   /** Human progress lines ("Creating api (:8080)…"). */
   onProgress?: (message: string) => void;
+  /** `--ttl`: release automatically this long after creation. In-process
+   * sessions run the timer here; detached ones get an expiry watcher (caller). */
+  ttlMs?: number;
+  /** Fired after an expired session's release; `failed` = tunnels that could
+   * not be removed (e.g. offline — the next `up` reaps them). */
+  onExpired?: (failed: string[]) => void;
 }
 
 /** The result of a provision: the tunnels plus how to tear them down. The
@@ -49,9 +57,13 @@ export interface ProvisionOptions {
  * signal handlers, so it is safe inside the Node API and the MCP server. */
 export interface TunnelSession {
   tunnels: ProvisionedTunnel[];
+  /** ISO deadline when created with `ttlMs`. */
+  expiresAt?: string;
   /** Release every tunnel (supervised: stop connectors only) and the hostname
-   * locks. Idempotent and best-effort. */
+   * locks. Idempotent and best-effort; concurrent callers share one release. */
   release(): Promise<void>;
+  /** True once a release has started — connector exits after that are ours. */
+  isReleasing(): boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -119,12 +131,19 @@ export async function provisionTunnels(
   const lockReleases: Array<() => Promise<void>> = [];
   // In-process tunnels die with this process; record it as owner so a crash
   // leaves a detectable (reapable) orphan instead of a silently public URL.
+  if (opts.ttlMs && opts.keepAlive) throw new CliError("A supervised (keep-alive) tunnel can't have a ttl.", { exitCode: 2 });
   const owned = !opts.detach && !opts.keepAlive;
-  let released = false;
+  const expiresAt = opts.ttlMs ? new Date(Date.now() + opts.ttlMs).toISOString() : undefined;
+  let releasing: Promise<void> | undefined;
+  let expiryTimer: NodeJS.Timeout | undefined;
 
-  const release = async (): Promise<void> => {
-    if (released) return;
-    released = true;
+  // Memoized: a second caller (e.g. a connector-exit handler racing the TTL
+  // timer) must WAIT for the in-flight release, not return early and exit the
+  // process half-way through deleting the tunnel + DNS.
+  const releaseFailed: string[] = [];
+  const release = (): Promise<void> => (releasing ??= doRelease());
+  const doRelease = async (): Promise<void> => {
+    if (expiryTimer) clearInterval(expiryTimer);
     for (const t of tunnels) {
       try {
         if (opts.keepAlive) {
@@ -137,7 +156,9 @@ export async function provisionTunnels(
           // lost), its newer tunnel must survive our release.
           await removeTunnelSubdomain(cf, t.fqdn, { force: true, quiet: true, expectTunnelId: t.tunnelId });
         }
-      } catch { /* best-effort release */ }
+      } catch {
+        releaseFailed.push(t.fqdn); // best-effort release
+      }
     }
     for (const unlock of lockReleases) await unlock();
   };
@@ -159,7 +180,7 @@ export async function provisionTunnels(
     for (const item of items) {
       throwIfAborted(opts.signal);
       opts.onProgress?.(`Creating ${item.name ?? "tunnel"} (:${item.port})…`);
-      const createItem: CreateOptions = { ...item, owned, createdBy: opts.createdBy ?? item.createdBy ?? "cli" };
+      const createItem: CreateOptions = { ...item, owned, expiresAt, createdBy: opts.createdBy ?? item.createdBy ?? "cli" };
       const result = await createWithBootRetry(cf, createItem, opts.keepAlive, opts.signal);
       const fqdn = result.host.hostname;
       const logFile = logFileFor(fqdn);
@@ -201,5 +222,16 @@ export async function provisionTunnels(
     throw err;
   }
 
-  return { tunnels, release };
+  if (expiresAt && !opts.detach) {
+    // Wall-clock check (not a single long setTimeout) so a sleep past the
+    // deadline is caught on the first tick after wake.
+    expiryTimer = setInterval(() => {
+      if (!isExpired(expiresAt)) return;
+      clearInterval(expiryTimer);
+      void release().then(() => opts.onExpired?.(releaseFailed));
+    }, TTL_CHECK_MS);
+    expiryTimer.unref();
+  }
+
+  return { tunnels, expiresAt, release, isReleasing: () => releasing !== undefined };
 }

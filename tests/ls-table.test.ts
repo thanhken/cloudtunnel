@@ -26,3 +26,11 @@ describe("toLsRow (ls table cells)", () => {
     expect(row).toEqual(["3", "https://api.abc.com", "-", "-", "unmanaged", "-", "-"]);
   });
 });
+
+describe("toLsRow ttl", () => {
+  it("appends the remaining time to a live tunnel with an expiry", () => {
+    const expiresAt = new Date(Date.now() + 72 * 60_000 + 30_000).toISOString();
+    expect(toLsRow({ ...base, expiresAt })[4]).toBe("up (1h12m left)");
+    expect(toLsRow({ ...base, state: "expired", expiresAt: new Date(0).toISOString() })[4]).toBe("expired");
+  });
+});

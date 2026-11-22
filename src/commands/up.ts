@@ -11,11 +11,12 @@ import { checkLocalReady } from "../connector/health.js";
 import type { CreateOptions } from "../core/orchestrator-create.js";
 import { startTunnels } from "../core/up-runner.js";
 import { resolveDomain } from "../core/resolve-domain.js";
-import { listAll, reapOrphans, registryTunnels } from "../core/orchestrator-manage.js";
+import { listAll, reapStale, registryTunnels } from "../core/orchestrator-manage.js";
 import { getEntry, isOurConnector, patchEntry } from "../connector/registry.js";
 import { parseTunnelSpec, type TunnelSpec } from "../core/tunnel-spec.js";
 import { parseTransportProtocol, type TransportProtocol } from "../core/transport-protocol.js";
 import { randomSlug } from "../core/slug.js";
+import { parseTtl } from "../core/ttl.js";
 import { assertServiceSupported, installServiceForSpec, serviceLogsHint } from "../core/service.js";
 
 interface UpOptions {
@@ -28,6 +29,7 @@ interface UpOptions {
   force?: boolean;
   yes?: boolean;
   json?: boolean;
+  ttl?: string; // auto-release after this long (e.g. 2h)
 }
 
 /** Interactive port prompt (0-arg wizard). */
@@ -57,6 +59,12 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   const protocol: TransportProtocol | undefined = opts.protocol ? parseTransportProtocol(opts.protocol) : undefined;
   // Parse specs up front (fail fast on a typo before touching the network). 0 args
   // → wizard, which needs a TTY.
+  const ttlMs = opts.ttl !== undefined ? parseTtl(opts.ttl) : undefined;
+  if (ttlMs && (opts.service || opts.keepAlive)) {
+    throw new CliError("--ttl can't be combined with --service / --keep-alive.", {
+      exitCode: 2, hint: "a boot service is meant to stay up; use --detach --ttl for a temporary tunnel",
+    });
+  }
   if (opts.json && !opts.detach && !opts.service) {
     throw new CliError("--json needs --detach or --service.", {
       exitCode: 2,
@@ -74,7 +82,7 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
   // Tunnels whose owning process crashed would otherwise stay public forever.
   // Not on supervised (boot-service) starts: N services booting together would
   // race on the same orphans and delay their own start while offline.
-  if (!opts.keepAlive) await reapOrphans(cf);
+  if (!opts.keepAlive) await reapStale(cf);
 
   if (process.stdout.isTTY) intro("cloudtunnel");
 
@@ -103,7 +111,7 @@ async function runUp(specArgs: string[], opts: UpOptions): Promise<void> {
     return;
   }
 
-  const fqdns = await startTunnels(cf, bin, items, { detach: opts.detach, protocol, keepAlive: opts.keepAlive });
+  const fqdns = await startTunnels(cf, bin, items, { detach: opts.detach, protocol, keepAlive: opts.keepAlive, ttlMs });
   if (opts.json) emitJson(tunnelsPayload(await startedTunnels(cf, fqdns), { failed: [] }));
 }
 
@@ -204,6 +212,7 @@ export function registerUp(program: Command): void {
     .option("--protocol <proto>", "cloudflared edge transport: auto | http2 | quic (http2 for UDP-hostile networks)")
     .option("--detach", "run the connectors in the background")
     .option("--keep-alive", "supervised mode with auto-heal watchdog")
+    .option("--ttl <duration>", "release automatically after this long: 30m, 2h, 1d (1m–30d)")
     .option("--service", "register each subdomain as a boot service (Linux systemd · macOS launchd · Windows Task Scheduler)")
     .option("-f, --force", "replace a non-tunnel DNS record occupying the hostname")
     .option("-y, --yes", "don't prompt; don't ask before replacing an existing record")

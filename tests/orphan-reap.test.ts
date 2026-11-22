@@ -59,28 +59,51 @@ describe("orphan detection", () => {
     expect(deleteDnsRecord).not.toHaveBeenCalled();
   });
 
-  it("reapOrphans releases dead-owner tunnels and leaves live/unowned ones", async () => {
+  it("reapStale releases dead-owner tunnels and leaves live/unowned ones", async () => {
     await seed(DEAD_PID);
-    const { reapOrphans } = await import("../src/core/orchestrator-manage.js");
+    const { reapStale } = await import("../src/core/orchestrator-manage.js");
     const { getEntry } = await import("../src/connector/registry.js");
     const { deleteDnsRecord } = await import("../src/cloudflare/dns.js");
-    expect(await reapOrphans(cf)).toEqual(["api.abc.com"]);
+    expect(await reapStale(cf)).toEqual(["api.abc.com"]);
     expect(deleteDnsRecord).toHaveBeenCalledWith("t", "z1", "dns-1");
     expect(getEntry("api.abc.com")).toBeUndefined();
   });
 
-  it("reapOrphans skips a hostname whose DNS now points at a different tunnel", async () => {
+  it("reapStale skips a hostname whose DNS now points at a different tunnel", async () => {
     await seed(DEAD_PID);
     const { findCname, deleteDnsRecord } = await import("../src/cloudflare/dns.js");
     vi.mocked(findCname).mockResolvedValueOnce({ id: "dns-2", content: "tun-NEW.cfargotunnel.com" } as never);
-    const { reapOrphans } = await import("../src/core/orchestrator-manage.js");
-    expect(await reapOrphans(cf)).toEqual([]);
+    const { reapStale } = await import("../src/core/orchestrator-manage.js");
+    expect(await reapStale(cf)).toEqual([]);
     expect(deleteDnsRecord).not.toHaveBeenCalled();
   });
 
-  it("reapOrphans ignores entries whose owner is alive", async () => {
+  it("reapStale ignores entries whose owner is alive", async () => {
     await seed(process.pid);
-    const { reapOrphans } = await import("../src/core/orchestrator-manage.js");
-    expect(await reapOrphans(cf)).toEqual([]);
+    const { reapStale } = await import("../src/core/orchestrator-manage.js");
+    expect(await reapStale(cf)).toEqual([]);
+  });
+});
+
+describe("expired tunnels", () => {
+  it("listAll shows an expired entry as `expired`; reapStale releases it", async () => {
+    const { upsertEntry } = await import("../src/connector/registry.js");
+    await upsertEntry("api.abc.com", {
+      subdomain: "api", zone: "abc.com", zoneId: "z1", port: 8080, proto: "http",
+      tunnelId: "tun-1", state: "stopped", expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const { listAll, reapStale } = await import("../src/core/orchestrator-manage.js");
+    expect((await listAll(cf))[0]!.state).toBe("expired");
+    expect(await reapStale(cf)).toEqual(["api.abc.com"]);
+  });
+
+  it("reapStale leaves a not-yet-expired tunnel alone", async () => {
+    const { upsertEntry } = await import("../src/connector/registry.js");
+    await upsertEntry("api.abc.com", {
+      subdomain: "api", zone: "abc.com", zoneId: "z1", port: 8080, proto: "http",
+      tunnelId: "tun-1", state: "stopped", expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const { reapStale } = await import("../src/core/orchestrator-manage.js");
+    expect(await reapStale(cf)).toEqual([]);
   });
 });

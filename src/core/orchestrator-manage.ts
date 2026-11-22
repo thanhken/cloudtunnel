@@ -4,6 +4,7 @@ import { deleteTunnelWithConnections, getTunnel, isManagedTunnel, listTunnels } 
 import { deleteDnsRecord, findCname, isManagedDns } from "../cloudflare/dns.js";
 import type { DnsRecord, Tunnel as CfTunnel } from "../cloudflare/types.js";
 import type { Tunnel, TunnelState } from "./tunnel-types.js";
+import { isExpired } from "./ttl.js";
 import { CliError } from "../ui/errors.js";
 import { say } from "../ui/output.js";
 import { entryFqdn, getEntry, isOwnerAlive, listEntries, reconcile, removeEntry, type RegistryEntry } from "../connector/registry.js";
@@ -187,7 +188,8 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<Tun
   const issues = serviceIssuesByFqdn();
   const rows: Tunnel[] = await Promise.all(entries.map(async (e): Promise<Tunnel> => {
     const gone = e.tunnelId ? !tunnels.has(e.tunnelId) : false;
-    const state = isOwnerAlive(e) ? await probeEntryState(e, gone) : "orphaned";
+    const state: TunnelState = isExpired(e.expiresAt) ? "expired"
+      : isOwnerAlive(e) ? await probeEntryState(e, gone) : "orphaned";
     return entryToTunnel(e, state, issues.get(entryFqdn(e)) ?? null);
   }));
   if (opts.all) {
@@ -220,22 +222,26 @@ export async function listAll(cf: Cf, opts: { all?: boolean } = {}): Promise<Tun
   return rows;
 }
 
-/** Release tunnels whose in-process owner died (crash / kill -9 of the CLI
- * foreground, Node API host or MCP server) — otherwise their connector keeps a
- * public URL up indefinitely. Only touches a hostname that still points at the
- * recorded tunnel. Best-effort: failures are warned, never thrown. */
-export async function reapOrphans(cf: Cf): Promise<string[]> {
+/** Release stale tunnels nobody will clean up otherwise: past their `--ttl`
+ * deadline (a detached watcher was killed / the machine slept), or whose
+ * in-process owner died (crash / kill -9 of the CLI foreground, Node API host
+ * or MCP server). Only touches a hostname that still points at the recorded
+ * tunnel. Best-effort: failures are logged, never thrown. */
+export async function reapStale(cf: Cf): Promise<string[]> {
   const reaped: string[] = [];
   for (const e of listEntries()) {
-    if (isOwnerAlive(e) || !e.tunnelId) continue;
+    if (!e.tunnelId) continue;
+    const expired = isExpired(e.expiresAt);
+    if (!expired && isOwnerAlive(e)) continue;
     const fqdn = entryFqdn(e);
     try {
       // A live foreground owner always holds the hostname lock; a dead one's
-      // lock goes stale — so a held lock means "not actually orphaned".
-      await assertHostnameFree(fqdn);
+      // lock goes stale — so a held lock means "not actually orphaned". An
+      // expired tunnel is released even while its owner still runs.
+      if (!expired) await assertHostnameFree(fqdn);
       await removeTunnelSubdomain(cf, fqdn, { quiet: true, expectTunnelId: e.tunnelId });
       reaped.push(fqdn);
-      say.dim(`Released orphaned ${fqdn} (its owner process is gone).`);
+      say.dim(`Released ${expired ? "expired" : "orphaned"} ${fqdn}.`);
     } catch (err) {
       say.debug(`[reap] ${fqdn}: ${(err as Error).message}`);
     }

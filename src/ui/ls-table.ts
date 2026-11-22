@@ -1,5 +1,6 @@
 import type { Tunnel } from "../core/tunnel-types.js";
 import { printTable } from "./output.js";
+import { formatRemaining } from "../core/ttl.js";
 
 export const LS_HEAD = ["#", "URL", "TARGET", "PROTOCOL", "STATE", "SERVICE", "PID"];
 
@@ -11,10 +12,16 @@ export function toLsRow(t: Tunnel): string[] {
     t.url,
     t.target ?? "-",
     t.protocol ?? "-",
-    t.state,
+    stateLabel(t),
     t.serviceIssue ? `${svc} (${t.serviceIssue})` : svc,
     t.pid === null ? "-" : String(t.pid),
   ];
+}
+
+/** State cell; a live `--ttl` tunnel also shows its remaining time. */
+function stateLabel(t: Tunnel): string {
+  if (!t.expiresAt || (t.state !== "up" && t.state !== "reconnecting")) return t.state;
+  return `${t.state} (${formatRemaining(Date.parse(t.expiresAt) - Date.now())} left)`;
 }
 
 /** Render tunnels as the `ls` table. */

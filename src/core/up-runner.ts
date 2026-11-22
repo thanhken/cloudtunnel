@@ -7,6 +7,8 @@ import { notifyConnectorExited, startTunnelWatchdog, stopAllWatchdogs } from "./
 import { readInstalledVersion } from "./installed-version.js";
 import type { TransportProtocol } from "./transport-protocol.js";
 import { provisionTunnels, type TunnelSession } from "./tunnel-provisioner.js";
+import { spawnExpiryWatcher } from "./expiry-watcher.js";
+import { formatRemaining } from "./ttl.js";
 
 /** Exit code a supervised run uses to ask its boot service for a restart onto
  * a newly installed version (systemd `Restart=always` / launchd `KeepAlive`). */
@@ -25,7 +27,7 @@ export async function startTunnels(
   cf: Cf,
   bin: string,
   items: CreateOptions[],
-  opts: { detach?: boolean; protocol?: TransportProtocol; keepAlive?: boolean } = {},
+  opts: { detach?: boolean; protocol?: TransportProtocol; keepAlive?: boolean; ttlMs?: number } = {},
 ): Promise<string[]> {
   let session: TunnelSession | undefined;
   let tornDown = false;
@@ -63,6 +65,12 @@ export async function startTunnels(
       protocol: opts.protocol,
       keepAlive: opts.keepAlive,
       createdBy: "cli",
+      ttlMs: opts.ttlMs,
+      onExpired: (failed) => {
+        if (failed.length) say.warn(`TTL reached — could not release ${failed.join(", ")} (the next \`cloudtunnel up\` cleans it up).`);
+        else say.info("TTL reached — tunnels released.");
+        void teardownAll(0);
+      },
       signal: abort.signal,
       onLockLost: () => process.exit(1), // two supervisors would delete each other's tunnel
       onProgress: (m) => {
@@ -79,6 +87,7 @@ export async function startTunnels(
           abort.abort(new CliError(`Connector for ${fqdn} exited.`));
           return;
         }
+        if (session.isReleasing()) return; // our own release (e.g. TTL) stopped it
         say.warn(`Connector for ${fqdn} exited.`);
         void teardownAll(code ?? 1);
       },
@@ -101,9 +110,14 @@ export async function startTunnels(
 
   if (opts.detach) {
     for (const sig of SIGNALS) process.off(sig, onSignal);
+    // No process of ours survives a detach — a small watcher enforces the TTL.
+    if (session.expiresAt) {
+      for (const t of started) spawnExpiryWatcher({ fqdn: t.fqdn, tunnelId: t.tunnelId, expiresAt: session.expiresAt });
+    }
     spin.stop(`${started.length} tunnel(s) started in the background`);
     const lines = started.map((s) => `${formatRoute(s.fqdn, s.target)}  ${dim(`pid ${s.pid}`)}`);
     note(lines.join("\n"), "running in background");
+    if (session.expiresAt) say.dim(`Auto-release in ${formatRemaining(opts.ttlMs!)}.`);
     if (process.stdout.isTTY) outro("Stop with: cloudtunnel delete <#|--all>");
     return started.map((t) => t.fqdn);
   }
@@ -118,6 +132,7 @@ export async function startTunnels(
   const lines = started.map((s, i) => `${formatRoute(s.fqdn, s.target)}${healths[i] === "healthy" ? "" : dim(`  (${healths[i]})`)}`);
   note(lines.join("\n"), `${live}/${started.length} live`);
   say.dim(opts.keepAlive ? "Service running with auto-heal watchdog." : "Ctrl-C stops and releases them.");
+  if (opts.ttlMs) say.dim(`Auto-release in ${formatRemaining(opts.ttlMs)}.`);
   return started.map((t) => t.fqdn);
 }
 
